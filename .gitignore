@@ -1,0 +1,4 @@
+.vscode
+dynamic_*
+secret*
+tmp_*

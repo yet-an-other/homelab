@@ -1,0 +1,86 @@
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'upkuma'
+    container_vlan_id   : 10
+    container_ip        : ''
+    container_vmid      : 10301
+    container_disk_size : 4
+    container_memory    : 1024
+    container_cores     : 1
+    container_user      : 'root'
+    container_mount     : ''
+  tasks:
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+    ## uptime kuma setup
+    ##
+    - name: setup uptime kuma
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+
+        - name: update system
+          apt:
+            update_cache: yes
+            upgrade     : dist
+            autoremove  : yes
+            autoclean   : yes
+            
+        - name: install packages
+          apt:
+            name: "{{ item }}"
+            state: present
+          with_items:
+            - git
+            - nodejs
+            - npm
+            - nginx 
+            - curl
+
+        - name: clone repo
+          git:
+            repo: 'https://github.com/louislam/uptime-kuma.git'
+            dest: /opt/uptime-kuma
+
+        - name: install requirements
+          shell: |
+            cd /opt/uptime-kuma
+            npm install pm2 -g 
+            pm2 install pm2-logrotate
+            npm run setup
+            pm2 start server/server.js --name uptime-kuma
+            pm2 save && pm2 startup
+          args:
+            creates: /opt/uptime-kuma/node_modules
+        
+
+    ## Nginx
+    ##
+    - name: create nginx config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ container_hostname }}.conf
+        content: "{{ lookup('template', 'nginx-upkuma.conf') }}"
+
+
+    # add certificates and restart nginx
+    #
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d {{ container_hostname }}.{{ domain_name }}'
+        reloadcmd: 'sudo systemctl restart nginx'
+
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_hostname }}'

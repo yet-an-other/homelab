@@ -1,0 +1,28 @@
+server {
+        listen 127.0.0.1:20000 default_server;
+        server_name "" _;
+        ssl_certificate /usr/ssl/fullchain.crt;
+        ssl_certificate_key /usr/ssl/certificate.key;        
+        return 418;
+}
+
+server {
+        listen 127.0.0.1:20000 ssl http2;
+
+        server_name {{domain_name}} www.{{domain_name}};
+
+        ssl_certificate /usr/ssl/fullchain.crt;
+        ssl_certificate_key /usr/ssl/certificate.key;
+
+        access_log /var/log/nginx/default.access.log;
+        error_log /var/log/nginx/default.error.log;
+
+        root /var/www/html;
+
+        index index.html index.htm index.nginx-debian.html;
+
+        location / {
+
+                try_files $uri $uri/ =404;
+        }
+}

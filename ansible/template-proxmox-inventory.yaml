@@ -1,0 +1,34 @@
+proxmox:
+  hosts:
+    prox-n1:
+      ansible_host: 192.168.10.241
+      node_id: 1
+    prox-n2:
+      ansible_host: 192.168.10.242
+      node_id: 2
+    prox-n3:
+      ansible_host: 192.168.10.243
+      node_id: 3
+  vars:
+    ansible_ssh_private_key_file: ""
+    ansible_user: ""
+    ansible_password: ""
+    ssh_pub_key_file: ""
+    domain_name: ""
+
+    service_password: ""
+    ntfy_url: ""
+    ntfy_topic: ""
+    cf_token: ""
+    cf_zone_id: ""
+    
+    web_push_public_key: ""
+    web_push_private_key: ""
+    wg_server_private_key: ""
+    wg_server_public_key: ""
+    wg_client_private_key: ""
+    wg_client_public_key: ""
+    wg_port: 
+
+    qbt_webgui_password: ""
+    sponsorblock_screen_id: ""

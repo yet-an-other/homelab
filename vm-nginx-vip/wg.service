@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+
+depend() {
+    need net
+    after firewall
+}
+
+start() {
+    ebegin "Starting WireGuard"
+    wg-quick up wg0
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping WireGuard"
+    wg-quick down wg0
+    eend $?
+}    

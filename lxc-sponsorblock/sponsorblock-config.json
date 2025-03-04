@@ -1,0 +1,22 @@
+{
+    "devices": [
+        {
+            "screen_id": "{{ sponsorblock_screen_id }}",
+            "name": "Apple TV",
+            "offset": 0
+        }
+    ],
+    "apikey": "",
+    "skip_categories": [
+        "sponsor",
+        "selfpromo",
+        "exclusive_access",
+        "filler",
+        "interaction"
+    ],
+    "channel_whitelist": [],
+    "skip_count_tracking": true,
+    "mute_ads": true,
+    "skip_ads": true,
+    "auto_play": true
+}
