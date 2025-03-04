@@ -1,0 +1,79 @@
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'sponsorblock'
+    container_vlan_id   : 20
+    container_ip        : ''
+    container_vmid      : 20300
+    container_disk_size : 2
+    container_memory    : 512
+    container_cores     : 1
+    container_user      : 'root'
+  tasks:
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+    ## sponsorblock setup
+    ##
+    - name: setup sponsorblock
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+
+        - name: update system
+          apt:
+            update_cache: yes
+            upgrade     : dist
+            autoremove  : yes
+            autoclean   : yes
+            
+        - name: install packages
+          apt:
+            name: "{{ item }}"
+            state: present
+          with_items:
+            - python3
+            - python3-pip
+
+        - name: clone repo
+          git:
+            repo: 'https://github.com/dmunozv04/iSponsorBlockTV'
+            dest: /opt/sponsorblock
+
+        - name: create python venv
+          pip:
+            name: virtualenv
+            path: /opt/sponsorblock/venv
+
+        - name: install requirements
+          pip:
+            requirements: /opt/sponsorblock/requirements.txt
+            virtualenv: /opt/sponsorblock/venv
+
+        - name: create systemd service
+          copy:
+            dest: /etc/systemd/system/sponsorblock.service
+            content: "{{ lookup('template', 'sponsorblock.service') }}"
+        
+        - name: copy config
+          copy:
+            dest: /root/.local/share/iSponsorBlockTV/config.json
+            content: "{{ lookup('template', 'sponsorblock-config.json') }}"
+
+        - name: enable and start service
+          systemd:
+            name: sponsorblock
+            enabled: yes
+            state: started
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: 'sblock'
+        host: '{{ container_hostname }}'

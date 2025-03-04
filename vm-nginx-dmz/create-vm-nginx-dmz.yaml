@@ -1,0 +1,218 @@
+## Creates front-facing reverse proxy vm
+## Using ubuntu linux as base image, as alpine does not really work with xray which we need for vpn
+## VPN is hidden behind speed-test service, and for that we need a streaming module for nginx
+##
+- name: create vm
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    ### Set variables specific to the vm
+    ###
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    template_vm         : 'ubuntu2404-tmpl'
+    container_hostname  : 'nginx-dmz'
+    container_vlan_id   : 20
+    container_ip        : '192.168.20.202'
+    container_vmid      : 20202
+    container_disk_size : '5G'
+    container_memory    : 1024
+
+    container_mac       : 'BC:24:11:E8:60:06'
+
+    local_proxy         : '192.168.40.204' # nginx-vip
+    fallback_host       : 'speedtest'
+
+    ### 
+
+  tasks:
+    - name: create container
+      community.general.proxmox_kvm:
+        node            : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        newid           : '{{ container_vmid }}'
+        name            : '{{ container_hostname }}'
+        cores           : 1
+        clone           : '{{ template_vm }}'
+      delegate_to       : localhost
+      register          : container
+
+    - name: print info
+      ansible.builtin.debug:
+        msg             : '{{ container }}'
+
+    - name: Pause for 5 seconds to allow create the vm
+      ansible.builtin.pause:
+        seconds: 6
+
+    - name: start vm
+      proxmox_kvm:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        name            : '{{ container_hostname }}'
+        node            : '{{ proxmox_node }}'
+        state           : started
+      delegate_to       : localhost
+
+    - name: get vm info
+      community.general.proxmox_vm_info:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        name            : '{{ container_hostname }}'
+        node            : '{{ proxmox_node }}'
+        config          : current
+      delegate_to       : localhost
+      register          : vm_info
+
+    - name: configure vm resources
+      shell: |
+        qm set {{ container_vmid }} --memory {{ container_memory }}
+        qm set {{ container_vmid }} --onboot 1
+
+    - name: configure vm disk resources
+      shell: |
+        qm disk resize {{ container_vmid }} scsi0 {{ container_disk_size }}
+        qm guest exec {{ container_vmid }} -- sh -c "printf 'yes\n100%%' | parted /dev/sda resizepart 2 ---pretend-input-tty"
+        qm guest exec {{ container_vmid }} -- resize2fs /dev/sda2
+      when: vm_info.proxmox_vms[0].config.scsi0 is search('size=5G')
+
+    - name: configure vm network
+      shell: |
+        qm set {{ container_vmid }} --net0 virtio,macaddr={{ container_mac }},bridge=vmbr0,tag={{ container_vlan_id }}
+        qm set {{ container_vmid }} --nameserver 192.168.{{ container_vlan_id }}.1
+        qm guest exec {{ container_vmid }} -- sh -c "echo '{{ container_hostname }}' > /etc/hostname"
+        qm guest exec {{ container_vmid }} -- sh -c "echo '127.0.0.1 localhost {{ container_hostname }}' > /etc/hosts"
+      when: not (vm_info.proxmox_vms[0].config.net0 is search('{{ container_vlan_id }}'))
+
+    - name: config ssh
+      shell: |
+        qm guest exec {{ container_vmid }} -- mkdir -p /root/.ssh
+        qm guest exec {{ container_vmid }} -- chmod 700 /root/.ssh
+        qm guest exec {{ container_vmid }} -- chown root:root /root/.ssh
+        qm guest exec {{ container_vmid }} -- bash -c "echo {{ lookup('file', '{{ container_ssh_file }}') }} > /root/.ssh/authorized_keys"
+        qm guest exec {{ container_vmid }} -- chmod 600 /root/.ssh/authorized_keys
+
+    - name: restart vm
+      proxmox_kvm:
+        api_host: '{{ proxmox_node }}'
+        api_user: 'root@pam'
+        api_password: '{{ proxmox_password }}'
+        name        : '{{ container_hostname }}'
+        node        : '{{ proxmox_node }}'
+        state       : restarted
+      delegate_to: localhost
+
+    - name: create host
+      add_host:
+        name: '{{ container_hostname }}'
+        ansible_host: '{{ container_ip }}' ## dhcp should assign the ip based on mac
+        ansible_user: 'root'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+
+    - name: Pause for 15 seconds to allow restart the vm
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: update system
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      apt:
+        update_cache: yes
+        upgrade     : dist
+        autoremove  : yes
+        autoclean   : yes
+
+    - name: install packages
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - nginx
+        - libnginx-mod-stream
+        - unzip
+        - cron
+      
+    - name: config mod_stream
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/modules-available/front-stream.conf
+        content: "{{ lookup('template', 'stream.conf') }}"
+
+    - name: enable front stream
+      delegate_to: "{{ container_hostname }}"
+      ansible.builtin.file:
+        src: /etc/nginx/modules-available/front-stream.conf
+        dest: /etc/nginx/modules-enabled/front-stream.conf
+        state: link
+
+    - name: config sites
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/sites-available/{{ item.dest }}
+        content: "{{ lookup('template', '{{ item.src }}') }}"
+      loop:
+        - { src: 'default', dest: 'default' }
+        - { src: 'fallback', dest: 'speed' }
+
+    - name: enable sites
+      delegate_to: "{{ container_hostname }}"
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/{{ item }}
+        dest: /etc/nginx/sites-enabled/{{ item }}
+        state: link
+      loop:
+        - default
+        - speed  
+
+    - name: create xray user
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      shell: |
+        sudo adduser --shell /usr/sbin/nologin --no-create-home xrayuser
+        sudo wget https://github.com/XTLS/Xray-core/releases/download/v24.12.31/Xray-linux-64.zip
+        sudo unzip ./Xray-linux-64.zip -d /opt/xray
+        sudo chmod +x /opt/xray/xray
+        sudo chown -R xrayuser:xrayuser /opt/xray
+        sudo setcap cap_net_bind_service=+ep /opt/xray/xray
+      args:
+        creates: /opt/xray/xray
+
+    - name: create xray service
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/systemd/system/xray.service
+        content: "{{ lookup('template', 'xray.service') }}"
+
+    - name: create xray config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /opt/xray/config.json
+        content: "{{ lookup('template', 'xray-config.json') }}"
+
+    - name: start xray
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      service:
+        name: xray
+        enabled: yes
+
+    ## ssl certificates
+    ##
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d {{ domain_name }} -d speed.{{ domain_name }}'
+        reloadcmd: "sudo chown -R xrayuser:xrayuser /usr/ssl && sudo chmod g+rwx -R /usr/ssl/ && sudo systemctl restart nginx && sudo systemctl restart xray"
+
+    ## As we set mac_addr, the dhcp will assign the container_ip to the vm
+    ##
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_ip }}'

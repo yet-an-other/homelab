@@ -1,0 +1,99 @@
+# creates container, starts it, add ssh key, and creates host entry in ansible inventory
+# Inputs:
+# - proxmox_node: the proxmox node to create the container
+# - proxmox_password: the password for the proxmox node
+# - container_hostname: the hostname of the container
+# - container_vmid: the vmid of the container
+# - container_cores: the number of cpu cores for the container
+# - container_memory: the amount of memory for the container
+# - container_disk_size: the size of the disk for the container
+# - container_vlan_id: the vlan id for the container
+# - container_ip: the ip address for the container
+# - container_ssh_file: the ssh public key file to add to the container
+# - domain_name: the domain name for the container
+
+- name: create and preconfigure container
+  block:
+    - name: set network with ip
+      set_fact: 
+        network: 'name=eth0,gw=192.168.{{ container_vlan_id }}.1,ip={{ container_ip }}/24,bridge=vmbr0,tag={{ container_vlan_id }}'
+        host: '{{ container_ip }}'
+      when: container_ip | length > 0
+
+    - name: set network without ip
+      set_fact: 
+        network: 'name=eth0,ip=dhcp,bridge=vmbr0{% if container_vlan_id != 10 %},tag={{ container_vlan_id }}{% endif %}'
+        host: '{{ container_hostname }}'
+      when: container_ip | length == 0
+
+    - name: create container
+      community.general.proxmox:
+        node            : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        password        : '{{ proxmox_password }}'
+        hostname        : '{{ container_hostname }}'
+        vmid            : '{{ container_vmid }}'
+        ostemplate      : 'cephfs:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst'
+        cores           : '{{ container_cores }}'
+        memory          : '{{ container_memory }}'
+        swap            : 0
+        onboot          : 1
+        unprivileged    : 1
+        disk_volume:
+          storage       : ceph-pool
+          size          : '{{ container_disk_size }}'
+        netif: 
+          net0          : '{{ network }}'
+        nameserver      : '192.168.{{ container_vlan_id }}.1'
+        searchdomain    : '{{ domain_name }}'
+        mounts: 
+          mp0           : '/mnt/pve/cephfs/media/torrent,mp=/mnt/torrent,shared=1'
+        features: 
+          - nesting={{ container_nesting | default(0) }}
+      delegate_to       : localhost
+      register          : container
+
+    - name: start container
+      ignore_errors     : true
+      community.general.proxmox:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        vmid            : '{{ container_vmid }}'
+        state           : started
+        timeout         : 50
+      delegate_to       : localhost
+
+    - name: create .ssh directory
+      ansible.builtin.shell:
+        cmd: |
+          pct exec {{ container.vmid }} -- mkdir -p /root/.ssh
+          pct exec {{ container.vmid }} -- chmod 700 /root/.ssh
+          pct exec {{ container.vmid }} -- chown root:root /root/.ssh
+          pct exec {{ container.vmid }} -- bash -c 'echo {{ lookup('file', '{{ container_ssh_file }}') }} > /root/.ssh/authorized_keys'
+          pct exec {{ container.vmid }} -- chmod 600 /root/.ssh/authorized_keys
+
+    - name: create host
+      add_host:
+        name: '{{ container_hostname }}'
+        ansible_host: '{{ host }}'
+        ansible_user: '{{ container_user }}'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+
+    - name: debug
+      ansible.builtin.debug:
+        msg: '{{ item.line }}'
+      loop:
+        - line: '{{ container_hostname }}'
+        - line: '{{ host }}'
+
+    - name: update system
+      delegate_to: '{{ container_hostname }}'
+      become: yes
+      apt:
+        update_cache: yes
+        upgrade     : dist
+        autoremove  : yes
+        autoclean   : yes

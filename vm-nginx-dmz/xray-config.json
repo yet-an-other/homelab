@@ -1,0 +1,129 @@
+{
+    "log": {
+        "loglevel": "info",
+        "access": "/tmp/access.log",
+        "error": "/tmp/error.log"
+      },
+    "inbounds": [
+        {
+            "listen": "127.0.0.1",
+            "port": 20002,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "f89982b0-6821-4490-bc65-3f66e6d8da48",
+                        "flow": "xtls-rprx-vision"
+                    },
+                    {
+                        "id": "6f4fc93b-fe8d-482c-9160-c71f933a588b",
+                        "flow": "xtls-rprx-vision"
+                    }
+                ],
+                "decryption": "none",
+                "fallbacks": [
+                    {
+                        "dest": "20003",
+                        "xver": 1
+                    },
+                    {
+                        "alpn": "h2",
+                        "dest": "20004",
+                        "xver": 1
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "rejectUnknownSni": true,
+                    "minVersion": "1.2",
+                    "certificates": [
+                        {
+                            "ocspStapling": 3600,
+                            "certificateFile": "/usr/ssl/fullchain.crt",
+                            "keyFile": "/usr/ssl/certificate.key"
+                        }
+                    ]
+                }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls"
+                ]
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        },
+        {
+            "protocol": "dns",
+            "tag": "local-dns",
+            "settings": {
+                "address": "192.168.20.1",
+                "port": 53,
+                "network": "udp"
+            }
+        },
+        {
+            "protocol": "wireguard",
+            "tag": "wg-out",
+            "settings": {
+                "secretKey": "{{ wg_client_private_key }}",
+                "address": ["10.8.8.28/32"],
+                "peers": [
+                {
+                    "publicKey": "{{ wg_server_public_key }}",
+                    "endpoint": "{{ local_proxy }}:{{ wg_port}}",
+                    "allowedIPs": ["0.0.0.0/0"]
+                }
+                ]
+            }
+        }
+    ],
+    "routing": {
+        "rules": [
+        {
+            "type": "field",
+            "ip": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16"
+            ],
+            "outboundTag": "wg-out"
+        },
+        {
+            "type": "field",
+            "domain": ["{{ domain_name }}"],
+            "outboundTag": "wg-out"
+        },
+        {
+            "type": "field",
+            "network": "udp",
+            "port": 53,
+            "outboundTag": "local-dns"
+        },
+        {
+            "type": "field",
+            "network": "tcp,udp",
+            "outboundTag": "direct"
+        }
+        ],
+        "domainStrategy": "IPIfNonMatch"
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 2,
+                "connIdle": 120
+            }
+        }
+    }
+}
+

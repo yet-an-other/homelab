@@ -1,0 +1,90 @@
+
+
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'speedtest'
+    container_vlan_id   : 20
+    container_ip        : ''
+    container_vmid      : 20301
+    container_disk_size : 2
+    container_memory    : 512
+    container_cores     : 1
+    container_user      : 'root'
+    container_nesting   : 1
+  tasks:
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+    ## Openspeedtest setup
+    ##
+    - name: setup openspeedtest
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+        - name: update system
+          become: yes
+          apt:
+            update_cache: yes
+            upgrade     : dist
+            autoremove  : yes
+            autoclean   : yes
+
+        - name: install packages
+          become: yes
+          apt:
+            name        : "{{ item }}"
+            state       : present
+          with_items:
+            - curl
+            - ca-certificates
+
+        - name: register docker repository
+          become: yes
+          shell: |
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          args:
+            creates: /etc/apt/sources.list.d/docker.list
+
+        - name: update repository cache
+          become: yes
+          apt:
+            update_cache: yes
+
+        - name: install docker
+          become: yes
+          apt:
+            name        : "{{ item }}"
+            state       : present
+          with_items:
+            - docker-ce
+            - docker-ce-cli
+            - containerd.io
+
+        - name: start docker
+          become: yes
+          service:
+            name        : docker
+            state       : started
+            enabled     : yes
+
+        - name: run openspeedtest
+          become: yes
+          shell: |
+            sudo docker run -d --restart=unless-stopped --name openspeedtest -p 3000:3000 openspeedtest/latest
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: 'speed'
+        host: '{{ container_hostname }}'

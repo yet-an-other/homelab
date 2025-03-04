@@ -1,0 +1,125 @@
+## installs ntfy server on a lxc container
+##
+
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'ntfy'
+    container_vlan_id   : 20
+    container_ip        : '192.168.20.220'
+    container_vmid      : 20220
+    container_disk_size : '1G'
+    container_memory    : 512
+    container_cpu       : 1
+    container_user      : 'root'
+  tasks:
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+    ## ntfy setup
+    ##
+    - name: setup ntfy
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+        - name: update system
+          apt:
+            update_cache  : yes
+            upgrade       : dist
+            autoremove    : yes
+            autoclean     : yes
+
+        - name: install packages
+          apt:
+            name          : "{{ item }}"
+            state         : present
+          with_items:
+            - dirmngr 
+            - ca-certificates 
+            - software-properties-common 
+            - apt-transport-https
+            - curl
+
+        - name: add ntfy repository
+          become    : yes
+          shell     : |
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://archive.heckel.io/apt/pubkey.txt | sudo gpg --dearmor -o /etc/apt/keyrings/archive.heckel.io.gpg
+            sh -c "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/archive.heckel.io.gpg] https://archive.heckel.io/apt debian main' > /etc/apt/sources.list.d/archive.heckel.io.list"
+          args:
+            creates : /etc/apt/sources.list.d/archive.heckel.io.list
+
+        - name: update system
+          apt:
+            update_cache: yes
+
+
+        - name: install ntfy
+          apt:
+            name    : ntfy
+            state   : present
+
+        - name: move example config
+          command   : mv /etc/ntfy/server.yml /etc/ntfy/server.yml.example
+          args:
+            creates : /etc/ntfy/server.yml.example
+
+        - name: write ntfy config
+          copy:
+            dest: /etc/ntfy/server.yml
+            force: no
+            content: "{{ lookup('template', 'server.yml') }}"
+
+        - name: enable and start ntfy service
+          systemd:
+            name: ntfy
+            state: started
+            enabled: yes
+
+        - name: create ntfy user
+          become: yes
+          shell: |
+            ntfy access '*' '{{ ntfy_topic }}' write-only
+            NTFY_PASSWORD={{ service_password }} ntfy user add --role=admin ntfyUser
+            ntfy token add ntfyUser
+          register: ntfy_token
+
+        - name: print ntfy token
+          ansible.builtin.debug:
+            msg: '{{ ntfy_token }}'
+
+
+    ## Nginx
+    ##
+    - name: install nginx
+      delegate_to: "{{ container_hostname }}"
+      apt:
+        name: nginx
+        state: present
+
+    - name: create nginx config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ container_hostname }}.conf
+        content: "{{ lookup('template', 'ntfy-nginx.conf') }}"
+
+
+    # add certificates and restart nginx
+    #
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d {{ container_hostname }}.{{ domain_name }}'
+        reloadcmd: 'sudo systemctl restart nginx'
+
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_hostname }}'

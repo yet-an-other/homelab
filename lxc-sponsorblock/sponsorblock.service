@@ -1,0 +1,13 @@
+[Unit]
+        Description=iSponsorBlockTV service to block youtube adv.
+        After=network.target
+        StartLimitIntervalSec=0
+[Service]
+        Type=simple
+        Restart=always
+        RestartSec=2
+        User=root
+        ExecStart=/opt/sponsorblock/venv/bin/python /opt/sponsorblock/src/main.py
+
+[Install]
+        WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+base-url: "{{ ntfy_url }}"
+listen-http: ":2586"
+cache-file: "/var/cache/ntfy/cache.db"
+attachment-cache-dir: "/var/cache/ntfy/attachments"
+attachment-max-size: "10M"
+attachment-expiry-duration: "24h"
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+behind-proxy: true
+upstream-base-url: "https://ntfy.sh"
+enable-login: true
+web-push-public-key: '{{ web_push_public_key }}'
+web-push-private-key: '{{ web_push_private_key }}'
+web-push-file: "/var/lib/ntfy/web-push.db"
+# web-push-email-address: '{{ web_push_email_address  }}'

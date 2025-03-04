@@ -1,0 +1,178 @@
+## Creates local reverse proxy vm on proxmox 
+## Using alpine linux as base image
+## Configures nginx as reverse proxy for all proxmox nodes and homeassistant
+## it also accepts connections from the external proxy via wireguard for vpn
+##
+- name: create vm
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    ### Set variables specific to the vm
+    ###
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    template_vm         : 'alpine3212-tmpl'
+    container_hostname  : 'nginx-vip'
+    container_vlan_id   : 40
+    container_ip        : '192.168.40.204'
+    container_vmid      : 40204
+    container_disk_size : '2G'
+    container_memory    : 1024
+
+    container_mac       : 'BC:24:11:E8:60:07' # needs to create a record in dhcp server, so we'll get the defined ip
+    ha_host_ip          : 192.168.30.222
+    ### 
+
+  tasks:
+    - name: create container
+      community.general.proxmox_kvm:
+        node            : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        newid           : '{{ container_vmid }}'
+        name            : '{{ container_hostname }}'
+        cores           : 1
+        clone           : '{{ template_vm }}'
+      delegate_to       : localhost
+      register          : container
+
+    - name: print info
+      ansible.builtin.debug:
+        msg             : '{{ container }}'
+
+    - name: Pause for 5 seconds to allow create the vm
+      ansible.builtin.pause:
+        seconds: 6
+
+    - name: start vm
+      proxmox_kvm:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        name            : '{{ container_hostname }}'
+        node            : '{{ proxmox_node }}'
+        state           : started
+      delegate_to       : localhost
+
+    - name: get vm info
+      community.general.proxmox_vm_info:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        name            : '{{ container_hostname }}'
+        node            : '{{ proxmox_node }}'
+        config          : current
+      delegate_to       : localhost
+      register          : vm_info
+
+    - name: configure vm resources
+      shell: |
+        qm set {{ container_vmid }} --memory {{ container_memory }}
+        qm set {{ container_vmid }} --onboot 1
+        qm disk resize {{ container_vmid }} scsi0 {{ container_disk_size }}
+        qm guest exec {{ container_vmid }} -- sh -c "printf 'yes\n100%%' | parted /dev/sda resizepart 3 ---pretend-input-tty"
+        qm guest exec {{ container_vmid }} -- resize2fs /dev/sda3
+      when: vm_info.proxmox_vms[0].config.scsi0 is search('size=1G')
+
+
+    - name: configure vm network
+      shell: |
+        qm set {{ container_vmid }} --net0 virtio,macaddr={{ container_mac }},bridge=vmbr0,tag={{ container_vlan_id }}
+        qm set {{ container_vmid }} --nameserver 192.168.{{ container_vlan_id }}.1
+        qm guest exec {{ container_vmid }} -- sh -c "echo '{{ container_hostname }}' > /etc/hostname"
+        qm guest exec {{ container_vmid }} -- sh -c "echo '127.0.0.1 localhost {{ container_hostname }}' > /etc/hosts"
+      when: not (vm_info.proxmox_vms[0].config.net0 is search('{{ container_vlan_id }}'))
+
+    - name: config ssh
+      shell: |
+        qm guest exec {{ container_vmid }} -- mkdir -p /root/.ssh
+        qm guest exec {{ container_vmid }} -- chmod 700 /root/.ssh
+        qm guest exec {{ container_vmid }} -- chown root:root /root/.ssh
+        qm guest exec {{ container_vmid }} -- sh -c "echo {{ lookup('file', '{{ container_ssh_file }}') }} > /root/.ssh/authorized_keys"
+        qm guest exec {{ container_vmid }} -- chmod 600 /root/.ssh/authorized_keys
+        qm guest exec {{ container_vmid }} -- rc-update add sshd
+        qm guest exec {{ container_vmid }} -- rc-service sshd start
+
+    - name: restart vm
+      proxmox_kvm:
+        api_host: '{{ proxmox_node }}'
+        api_user: 'root@pam'
+        api_password: '{{ proxmox_password }}'
+        name        : '{{ container_hostname }}'
+        node        : '{{ proxmox_node }}'
+        state       : restarted
+      delegate_to: localhost
+
+    - name: create host
+      add_host:
+        name: '{{ container_hostname }}'
+        ansible_host: '{{ container_ip }}' # check if dhcp server has the record
+        ansible_user: 'root'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+
+    - name: Pause for 15 seconds to allow restart the vm
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: install nginx
+      delegate_to: "{{ container_hostname }}"    
+      shell: |
+        apk add nginx;
+        rc-update add nginx;
+
+    - name: configure proxmox
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/http.d/proxmox.conf 
+        content: "{{ lookup('template', 'proxmox.conf') }}"
+
+    - name: configure homeassistant
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/http.d/ha.conf 
+        content: "{{ lookup('template', 'ha.conf') }}"
+
+    # add certificates and restart nginx
+    #
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d proxmox.{{ domain_name }} -d ha.{{ domain_name }}'
+        reloadcmd: 'rc-service nginx restart'
+
+    # install wireguard
+    #
+    - name: instal dependencies
+      delegate_to: "{{ container_hostname }}"
+      shell: |
+        apk add wireguard-tools openrc iptables
+        echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-wireguard.conf
+        sysctl -p /etc/sysctl.d/99-wireguard.conf
+
+    - name: configure wireguard
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/wireguard/wg0.conf
+        content: "{{ lookup('template', 'wg0.conf') }}"
+
+    - name: create wg service file
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/init.d/wireguard
+        content: "{{ lookup('template', 'wg.service') }}"
+
+    - name: start wireguard
+      delegate_to: "{{ container_hostname }}"
+      shell: |
+        chmod +x /etc/init.d/wireguard
+        rc-update add wireguard default
+        rc-service wireguard start
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_ip }}'
+

@@ -1,0 +1,129 @@
+### creates qbittorrent container
+###
+
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'qbt'
+    container_vlan_id   : 20
+    container_ip        : '192.168.20.235'
+    container_vmid      : 20235
+    container_disk_size : '2G'
+    container_memory    : 4096
+    container_cpu       : 2
+    container_user      : 'root'
+  tasks:
+
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+
+    ## QBT setup
+    ##
+    - name: setup qbt
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+        - name: update system
+          apt:
+            update_cache: yes
+            upgrade: dist
+            autoremove: yes
+            autoclean: yes
+
+        - name: install packages
+          apt:
+            name: "{{ item }}"
+            state: present
+          with_items:
+            - dirmngr 
+            - ca-certificates 
+            - software-properties-common 
+            - apt-transport-https
+            - curl
+
+        - name: add qBittorrent repository
+          apt_repository:
+            repo: 'ppa:qbittorrent-team/qbittorrent-stable'
+            state: present
+
+        - name: create qbt user
+          user:
+            name: qbtUser
+            shell: /bin/bash
+            home: /home/qbtUser
+            password: "{{ 'qbtUser' | password_hash('sha512') }}"
+            createhome: yes
+
+        - name: install qbt
+          apt:
+            name: qbittorrent-nox
+            state: present
+
+        - name: create config directory with parent directories
+          file:
+            path: /home/qbtUser/.config/qBittorrent/
+            state: directory
+            owner: qbtUser
+            group: qbtUser
+
+        - name: write qbt config
+          copy:
+            dest: /home/qbtUser/.config/qBittorrent/qBittorrent.conf
+            force: no
+            content: '{{ lookup("template", "qbittorrent.conf") }}'
+
+        - name: write qbt watched folders config
+          copy:
+            dest: /home/qbtUser/.config/qBittorrent/watched_folders.json
+            force: no
+            content: '{{ lookup("template", "watched_folders.json") }}'
+
+        - name: create qbt service
+          copy: 
+            dest: /etc/systemd/system/qbittorrent.service
+            force: no
+            content: '{{ lookup("template", "qbittorrent.service") }}'
+
+
+        - name: enable and start qbt service
+          systemd:
+            name: qbittorrent
+            state: started
+            enabled: yes
+
+
+    ## Nginx
+    ##
+    - name: install nginx
+      delegate_to: "{{ container_hostname }}"
+      apt:
+        name: nginx
+        state: present
+
+    - name: create nginx config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ container_hostname }}.conf
+        content: "{{ lookup('template', 'nginx-qbt.conf') }}"
+
+    # add certificates and restart nginx
+    #
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d {{ container_hostname }}.{{ domain_name }}'
+        reloadcmd: 'sudo systemctl restart nginx'
+
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_hostname }}'
+          

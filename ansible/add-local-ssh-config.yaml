@@ -1,0 +1,22 @@
+## Input:
+# - hostname: the hostname of the container (the short string to identify host)
+# - host: the ip address or host of the container (the actual connection)
+# - ansible_ssh_private_key_file: the path to the private key file
+#
+- name: update local ssh config
+  delegate_to: localhost
+  blockinfile:
+    path: ~/.ssh/config
+    append_newline: true
+    prepend_newline: true
+    insertbefore: "Host \\*"   
+    marker: "# {mark} ANSIBLE MANAGED BLOCK"
+    marker_begin: "{{ container_hostname }}"  
+    block: |
+      Host {{ hostname }}
+        HostName {{ host }}
+        User root
+        Port 22
+        IdentityFile {{ ansible_ssh_private_key_file }}
+        IdentitiesOnly yes            
+    create: yes  
