@@ -1,3 +1,5 @@
+## Creates a local ssh config entry to log in to the container via ssh using the private key file.
+#
 ## Input:
 # - hostname: the hostname of the container (the short string to identify host)
 # - host: the ip address or host of the container (the actual connection)
