@@ -1,0 +1,28 @@
+zitadel:
+  masterkey: {{ zitadel_masterkey }}
+  configmapConfig:
+    ExternalSecure: true
+    ExternalDomain: {{ auth_domain_name }}
+    ExternalPort: 443
+    TLS:
+      Enabled: false
+    Database:
+      Postgres:
+        Host: {{ pg_host_rw }}
+        Port: 5432
+        Database: {{ zitadel_db_name }}
+        MaxOpenConns: 20
+        MaxIdleConns: 10
+        MaxConnLifetime: 30m
+        MaxConnIdleTime: 5m
+        User:
+          Username: {{ pg_user }}
+          Password: {{ pg_password }}
+          SSL:
+            Mode: disable
+        Admin:
+          Username: {{ pg_user }}
+          Password: {{ pg_password }}
+          ExistingDatabase: {{ zitadel_db_name }}
+          SSL:
+            Mode: disable

@@ -1,0 +1,42 @@
+    - name: Check if postgres is already deployed
+      kubernetes.core.k8s_info:
+        kind: Pod
+        name: '{{ pg_name }}-1'
+        namespace: '{{ app_namespace }}'
+      register: pg_pod_info
+    
+    - name: Move S3 data to backup
+      vars:
+        source_key: "{{ s3_working_path }}/{{ pg_name }}/"  # Source path in S3
+        destination_key: "{{ s3_backup_path }}/{{ pg_name }}/"
+
+      block:
+
+        - name: Check if source exists 
+          delegate_to: localhost
+          shell: |
+            aws s3 ls s3://{{ s3_pg_bucket }}/{{ source_key }} --no-verify-ssl > /dev/null 2>&1 && echo "true" || echo "false"
+          ignore_errors: yes
+          register: head_result
+      
+        - name: Set is_backup_exists flag
+          set_fact:
+            is_backup_exists: '{{ head_result.stdout == "true" }}'
+           
+        - name: Move source folder to destination (only if source exists)
+          delegate_to: localhost
+          shell: |
+            aws s3 mv s3://{{ s3_pg_bucket }}/{{ source_key }} s3://{{ s3_pg_bucket }}/{{ destination_key }} --recursive --no-verify-ssl
+          register: move_result
+          when: is_backup_exists
+
+        - name: Debug outputs
+          debug:
+            msg: 
+              - is_backup_exists: '{{ is_backup_exists }}'
+              - destination_key: '{{ destination_key }}'
+
+      when: pg_pod_info.resources | length == 0
+
+
+          # - pg_pod_info: '{{ pg_pod_info }}'

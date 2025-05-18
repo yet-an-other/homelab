@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }}
+  labels:
+    {{ labels | indent(4) }}
+data:
+  kubernetes.yaml: |
+    mode: cluster
+  settings.yaml: |
+    background: https://images.unsplash.com/photo-1502790671504-542ad42d5189?auto=format&fit=crop&w=2560&q=80
+    layout:
+      Services:
+        style: row
+        columns: 4
+    useEqualHeights: true
+    headerStyle: boxed
+    providers:
+      longhorn:
+        url: http://longhorn-frontend.longhorn-system.svc.cluster.local:80
+  custom.css: ""
+  custom.js: ""
+  bookmarks.yaml: |
+    - Developer:
+        - Github:
+            - abbr: GH
+              href: https://github.com/
+  services.yaml: |
+    - Services:
+        - Traefik:
+            href: https://{{ domain_fqdn }}/traefik
+            description: Traefik
+            icon: traefik
+            widget:
+              type: iframe
+              src: https://{{ domain_fqdn }}/grafana/d-solo/delzqomdvbhfke/homepage-widgets?orgId=1&timezone=browser&kiosk=true&panelId=1&__feature.dashboardSceneSolo
+              classes: h-30 sm:h-30 md:h-30 lg:h-30 xl:h-30 2xl:h-36 
+
+        - Grafana:
+            href: https://{{ domain_fqdn }}/grafana/
+            description: Grafana
+            icon: grafana
+            widget:
+              type: grafana
+              url: http://prometheus-grafana.monitoring.svc.cluster.local:80/grafana
+              username: admin
+              password: {{ pg_password }}
+
+        - Longhorn:
+            href: https://{{ domain_fqdn }}/longhorn
+            description: Longhorn
+            icon: longhorn
+
+        - Minio:
+            href: https://{{ domain_fqdn }}/minio/
+            description: Minio
+            icon: minio
+            widget:
+              type: iframe
+              src: https://{{ domain_fqdn }}/grafana/public-dashboards/47e2c18f93e04761aff6465cfc61094c
+              classes: h-30 sm:h-30 md:h-30 lg:h-30 xl:h-30 2xl:h-36
+
+  widgets.yaml: |
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: "cluster"
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+
+    - longhorn:
+        expanded: true
+        total: true
+        labels: true
+        nodes: true
+        href: https://{{ domain_fqdn }}/longhorn
+        include:
+          - worker-10
+          - worker-20
+          - worker-30
+
+    - search:
+        provider: duckduckgo
+        target: _blank
+  docker.yaml: ""

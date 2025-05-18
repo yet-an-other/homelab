@@ -1,0 +1,47 @@
+- name: update system and install balancers
+  hosts: 'k8s-nodes'
+  tasks: 
+
+    - name: update system
+      become: yes
+      apt:
+        update_cache: yes
+        upgrade     : dist
+        autoremove  : yes
+        autoclean   : yes
+
+    - name: install packages
+      become: yes
+      ansible.builtin.apt:
+        name: 
+          - keepalived
+          - haproxy
+        state: present
+        
+    ## configure keepalived
+    ##
+    - name: config keepalived
+      become: yes
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        content: "{{ lookup('template', 'keepalived.conf') }}"
+
+    ## configure haproxy
+    ##
+    - name: config haproxy
+      become: yes
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: "{{ lookup('template', 'haproxy-' + node_role + '.conf') }}"
+
+    - name: restart services
+      become: yes
+      service:
+        name: '{{ service }}'
+        state: restarted
+        enabled: yes
+      with_items:
+        - keepalived
+        - haproxy
+      loop_control:
+        loop_var: service

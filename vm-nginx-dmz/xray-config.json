@@ -12,11 +12,11 @@
             "settings": {
                 "clients": [
                     {
-                        "id": "f89982b0-6821-4490-bc65-3f66e6d8da48",
+                        "id": "{{ xray_client_id1 }}",
                         "flow": "xtls-rprx-vision"
                     },
                     {
-                        "id": "6f4fc93b-fe8d-482c-9160-c71f933a588b",
+                        "id": "{{ xray_client_id2 }}",
                         "flow": "xtls-rprx-vision"
                     }
                 ],

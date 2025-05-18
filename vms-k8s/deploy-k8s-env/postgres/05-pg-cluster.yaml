@@ -1,0 +1,69 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ pg_name }}
+  namespace: {{ app_namespace }}
+spec:
+
+  instances: 3
+
+  superuserSecret:
+    name: {{ pg_secret_name }}
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      # Storage is local so we can optimize for local disk performance
+      random_page_cost: "1.3"
+
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_working_path }}"
+      s3Credentials:
+        accessKeyId:
+          name: {{ aws_secret_name }}
+          key: aws_key_id
+        secretAccessKey:
+          name: {{ aws_secret_name }}
+          key: aws_secret_key
+      wal:
+        compression: bzip2
+        maxParallel: 2
+    retentionPolicy: "7d"
+
+  externalClusters:
+    - name: {{ pg_name }}
+      barmanObjectStore:
+        destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_backup_path }}"
+        s3Credentials:
+          accessKeyId:
+            name: {{ aws_secret_name }}
+            key: aws_key_id
+          secretAccessKey:
+            name: {{ aws_secret_name }}
+            key: aws_secret_key
+{% if s3_backup_path | length > 0 %}
+  bootstrap:
+    recovery:
+      source: {{ pg_name }}
+{% else %}
+  bootstrap:
+    initdb:
+      database: {{ zitadel_db_name }}
+      secret:
+        name: {{ pg_secret_name }}
+
+    initdb:
+      database: grafana
+      secret:
+        name: {{ pg_secret_name }}
+{% endif %}
+
+  storage:
+    storageClass: longhorn-local
+    size: {{ pg_storage_size }}
+
+  # Pod distribution - ensure PostgreSQL instances are on different nodes
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname

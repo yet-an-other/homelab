@@ -1,0 +1,19 @@
+- name: Setup worker nodes
+  hosts: 'worker-nodes'
+  become: true
+  gather_facts: true
+  tasks:
+
+    - name: Join the Worker nodes with master
+      shell: "{{ hostvars['K8S_JOIN_HOLDER']['join_command'] }}"
+      register: is_joined
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+    - debug:
+        msg: "{{ is_joined.stdout }}"
+
+    - name: Remove the cache directory.
+      ansible.builtin.file: 
+        path: ~/.kube/cache
+        state: absent

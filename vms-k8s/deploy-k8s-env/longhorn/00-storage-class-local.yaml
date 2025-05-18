@@ -1,0 +1,16 @@
+## A storage class for non distributed storage
+## where service can handle distribution by itself, e.g. minio, postgresql
+##
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-local
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+parameters:
+  numberOfReplicas: "1"
+  staleReplicaTimeout: "30"
+  dataLocality: "strict-local"
+  fsType: "ext4"
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer

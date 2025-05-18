@@ -1,0 +1,15 @@
+apiVersion: traefik.io/v1alpha1 
+kind: IngressRoute
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }} 
+spec:
+  entryPoints:
+    - websecure 
+  routes:
+    - match: Host(`{{ domain_fqdn }}`) && PathPrefix(`/grafana`) 
+      kind: Rule
+      services:
+        - name: '{{ app_name }}-grafana' 
+          port: 80
+  tls: {}

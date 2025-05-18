@@ -1,0 +1,102 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }}
+  labels:
+    {{ labels | indent(4) }}
+
+spec:
+  replicas: {{ app_replicas }}
+  selector:
+    matchLabels:
+      {{ selectors | indent(6) }}
+  template:
+    metadata:
+      labels:
+        {{ labels | indent(8) }}
+    spec:
+      serviceAccountName: '{{ app_name }}-account'
+      containers:
+        - name: '{{ app_name }}'
+          image: '{{ app_name }}:{{ app_version }}'
+          args:
+            - --api.basePath=/traefik
+
+            - --accesslog=true
+            # - --accesslog.filepath="" # console
+            # - --log.filePath=""  # console
+            - --log.level=INFO
+
+            - --entrypoints.websecure.Address=:443
+            - --entryPoints.websecure.proxyProtocol.insecure
+            - --entryPoints.websecure.forwardedHeaders.insecure
+
+            - --entrypoints.web.Address=:80
+            - --entrypoints.web.http.redirections.entryPoint.to=websecure
+            - --entrypoints.web.http.redirections.entryPoint.scheme=https
+            - --entrypoints.web.http.redirections.entrypoint.permanent=true
+
+            - --entryPoints.metrics.address=:8081
+            - --metrics.prometheus=true
+            - --metrics.prometheus.addEntryPointsLabels=true
+            - --metrics.prometheus.addServicesLabels=true
+            - --metrics.prometheus.addRoutersLabels=true
+            - --metrics.prometheus.entryPoint=metrics
+
+            - --entryPoints.ping.address=:8082
+            - --ping.entryPoint=ping
+            - --ping=true
+
+            - --providers.kubernetesingress=true
+            - --providers.kubernetescrd=true
+            - --providers.kubernetescrd.allowCrossNamespace=true
+            - --providers.kubernetescrd.allowExternalNameServices=true
+            - --providers.kubernetescrd.allowEmptyServices=true
+
+            - --serverstransport.insecureskipverify=true
+
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+            - name: metrics
+              containerPort: 8081
+            - name: ping  
+              containerPort: 8082
+
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /ping
+              port: 8082
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 2
+
+          readinessProbe:
+            failureThreshold: 1
+            httpGet:
+              path: /ping
+              port: 8082
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 2     
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "app.kubernetes.io/name"
+                      operator: In
+                      values:
+                        - {{ app_name }}
+                topologyKey: "kubernetes.io/hostname"

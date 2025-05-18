@@ -1,0 +1,104 @@
+crds:
+  enabled: false
+  
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+    # storageSpec:
+    #   volumeClaimTemplate: 
+    #     spec:
+    #       accessModes: [ "ReadWriteOnce" ]
+    #       storageClassName: "longhorn-spread"
+    #       resources:
+    #         requests:
+    #           storage: 8Gi
+
+    retention: 2d 
+    retentionSize: 5GB 
+    walCompression: true
+    logLevel: info
+
+
+grafana:
+  enabled: true
+  defaultDashboardsEnabled: false
+
+  adminUser: admin
+  adminPassword: {{ pg_password }}
+
+  sidecar:
+    dashboards:
+      enabled: true
+
+      # Support for new table panels, when enabled grafana auto migrates the old table panels to newer table panels
+      enableNewTablePanelSyntax: true
+
+    datasources:
+      enabled: true
+
+      ## URL of prometheus datasource
+      ##
+      url: http://{{ prometheus_endpoint }}:9090/
+
+      alertmanager:
+        enabled: true
+        url: http://{{ alertmanager_endpoint }}:9093  
+
+  additionalDataSources: 
+    - name: loki
+      type: loki
+      url: http://{{ loki_endpoint }}:80
+
+    - name: tempo
+      type: tempo
+      url: http://{{ tempo_endpoint }}:3100
+
+  envFromSecret: {{ pg_secret_name }}
+
+  grafana.ini: 
+
+    database:
+      type: postgres
+      # Use environment variables injected above for sensitive data
+      host: "{{ pg_host_rw }}"
+      name: "grafana"       
+      user: "${username}"     
+      password: "${password}" 
+      ssl_mode: "disable"      
+    server:
+      # This is the crucial setting for subpath
+      # Use your external *host* and the *subpath*.
+      # The trailing slash is important!
+      root_url: "https://{{ domain_fqdn }}/grafana/"
+      #  Helps Grafana serve assets correctly from the subpath
+      serve_from_sub_path: true
+
+    users:
+      auto_assign_org: true
+
+    auth:
+      oauth_allow_insecure_email_lookup: true
+
+    security:
+      allow_embedding: true
+
+    auth.generic_oauth:
+      enabled: true
+      allow_sign_up: true
+      name: Zitadel
+      client_id: "{{ zitadel_grafana_id }}"
+      scopes: "openid email profile offline_access roles"
+      auth_url: https://zitadel.bdgn.me/oauth/v2/authorize
+      token_url: https://zitadel.bdgn.me/oauth/v2/token
+      api_url: https://zitadel.bdgn.me/oidc/v1/userinfo
+      use_pkce: true
+      use_refresh_token: true
+      auto_login: true
+      email_attribute_name: email
+      login_attribute_path: username
+      name_attribute_path: fullname
+      email_attribute_path: email
+      role_attribute_path: contains(groups[*], 'GrafanaAdmin') && 'GrafanaAdmin' || contains(groups[*], 'GrafanaEditor') && 'Editor' || 'Viewer'
+      allow_assign_grafana_admin: true
+      tls_skip_verify_insecure: true

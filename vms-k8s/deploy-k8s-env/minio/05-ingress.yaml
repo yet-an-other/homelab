@@ -1,0 +1,31 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-minio
+  namespace: {{ app_namespace }}
+spec:
+  stripPrefix:
+    prefixes:
+      - "/minio"
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: '{{ app_name }}'
+  namespace: {{ app_namespace }}
+spec:
+  entryPoints:
+    - websecure  # Use HTTPS entry point
+
+  routes:
+    - match: Host(`{{ domain_fqdn }}`) && PathPrefix(`/minio`)
+      kind: Rule
+      middlewares:
+        - name: strip-minio
+      services:
+        - name: '{{ app_name }}-console'
+          port: 9090
+          namespace: {{ app_namespace }}
+  tls: {}
+

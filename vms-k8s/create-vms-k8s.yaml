@@ -1,0 +1,54 @@
+## The main script to creates a set of vms for k8s cluster
+## node role names are important and should be either 'control' or 'worker'
+## for ansible execution nodes are joined in the groups: control-nodes and worker-nodes respectively, and k8s-nodes for all nodes
+
+
+- name: create vm
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    ### Set variables specific to the vm
+    ###
+    proxmox_node            : "{{ inventory_hostname }}"
+    proxmox_node_ip         : "{{ ansible_host }}"
+    proxmox_password        : "{{ ansible_password }}"
+    container_ssh_file      : "{{ ssh_pub_key_file }}"
+    template_vm             : 'ubuntu2404-tmpl'
+    container_hostname_mask : ''
+    container_vlan_id       : 60
+    container_ip_mask       : '192.168.60.1'
+    container_mac_mask      : '00:60:00:00:60:'
+    container_vmid_mak      : '601'
+    container_tag           : 'k8s-node'
+    control_public_ip       : '192.168.60.100'
+    worker_public_ip        : '192.168.60.200'
+
+    nodes                   : []
+
+    
+  ### Create and configure node vms
+  ###
+  tasks:
+    - name: create vms
+      include_tasks: ./create-vm/1-create-vms.yaml
+      loop:
+        - { id: '01', target_node: 'prox-n1', role: 'control', container_disk_size: '20G', container_cores: 2, container_memory: 2048 }
+        - { id: '02', target_node: 'prox-n2', role: 'control', container_disk_size: '20G', container_cores: 2, container_memory: 2048 }
+        - { id: '03', target_node: 'prox-n3', role: 'control', container_disk_size: '20G', container_cores: 2, container_memory: 2048 }
+        - { id: '10', target_node: 'prox-n1', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8096 }
+        - { id: '20', target_node: 'prox-n2', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8096 }
+        - { id: '30', target_node: 'prox-n3', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8096 }
+
+    - name: debug
+      debug:
+        msg: '{{ nodes }}'
+
+    - name: create inventory file from template
+      delegate_to: localhost
+      template:
+        src: ./create-vm/inventory-template.j2
+        dest: ./envs/proxmox/generated.inventory.yaml
+
+  ### Install & configure balancers
+  ###
+- import_playbook: ./create-vm/2-install-balancer.yaml

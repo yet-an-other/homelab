@@ -1,0 +1,25 @@
+## install local software and config nodes
+##
+- import_playbook: 1-preset-nodes.yaml
+  vars:
+    containerd_version      : '2.0.4'
+    runsc_version           : '1.2.6'
+    k8s_version             : '1.32'
+
+### create first control plane node
+###
+- import_playbook: 2-create-first-cp.yaml
+  vars:
+    control_domain_name: 'k8s.{{ domain_name }}'
+    public_domain_name: 'kuber.{{ domain_name }}'
+    master_node: control-nodes[0]
+    
+### create rest control plane nodes
+###
+- import_playbook: 3-join-cps.yaml
+  vars:
+    control_nodes: control-nodes[1], control-nodes[2]
+
+### create workers
+###
+- import_playbook: 4-join-workers.yaml

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: '{{ app_name }}-metrics'
+  namespace: {{ app_namespace }}
+  labels:
+    {{ labels | indent(4) }}
+spec:
+  type: ClusterIP
+  selector:
+    {{ selectors | indent(4) }}
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 9000
+      targetPort: 9000

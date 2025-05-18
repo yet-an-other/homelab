@@ -1,0 +1,172 @@
+alloy:
+  securityContext:
+    sysctls:
+      - name: fs.inotify.max_user_watches
+        value: "2099999999"
+  configMap:
+    content: |-
+      // Write your Alloy config here:
+      logging {
+        level = "info"
+        format = "logfmt"
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://{{ loki_endpoint }}/loki/api/v1/push"
+        }
+      }
+
+      // discovery.kubernetes allows you to find scrape targets from Kubernetes resources.
+      // It watches cluster state and ensures targets are continually synced with what is currently running in your cluster.
+      discovery.kubernetes "pod" {
+        role = "pod"
+      }
+
+      // discovery.relabel rewrites the label set of the input targets by applying one or more relabeling rules.
+      // If no rules are defined, then the input targets are exported as-is.
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pod.targets
+
+        // Label creation - "namespace" field from "__meta_kubernetes_namespace"
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action = "replace"
+          target_label = "namespace"
+        }
+
+        // Label creation - "pod" field from "__meta_kubernetes_pod_name"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          action = "replace"
+          target_label = "pod"
+        }
+
+        // Label creation - "container" field from "__meta_kubernetes_pod_container_name"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          action = "replace"
+          target_label = "container"
+        }
+
+        // Label creation -  "app" field from "__meta_kubernetes_pod_label_app_kubernetes_io_name"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          action = "replace"
+          target_label = "app"
+        }
+
+        // Label creation -  "job" field from "__meta_kubernetes_namespace" and "__meta_kubernetes_pod_container_name"
+        // Concatenate values __meta_kubernetes_namespace/__meta_kubernetes_pod_container_name
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+          action = "replace"
+          target_label = "job"
+          separator = "/"
+          replacement = "$1"
+        }
+
+        // Label creation - "container" field from "__meta_kubernetes_pod_uid" and "__meta_kubernetes_pod_container_name"
+        // Concatenate values __meta_kubernetes_pod_uid/__meta_kubernetes_pod_container_name.log
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          action = "replace"
+          target_label = "__path__"
+          separator = "/"
+          replacement = "/var/log/pods/*$1/*.log"
+        }
+
+        // Label creation -  "container_runtime" field from "__meta_kubernetes_pod_container_id"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_id"]
+          action = "replace"
+          target_label = "container_runtime"
+          regex = "^(\\S+):\\/\\/.+$"
+          replacement = "$1"
+        }
+      }
+
+      // loki.source.kubernetes tails logs from Kubernetes containers using the Kubernetes API.
+      loki.source.kubernetes "pod_logs" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      // loki.process receives log entries from other Loki components, applies one or more processing stages,
+      // and forwards the results to the list of receivers in the component's arguments.
+      loki.process "pod_logs" {
+        stage.static_labels {
+            values = {
+              cluster = "vienna",
+            }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+
+      // loki.source.kubernetes_events tails events from the Kubernetes API and converts them
+      // into log lines to forward to other Loki components.
+      loki.source.kubernetes_events "cluster_events" {
+        job_name   = "integrations/kubernetes/eventhandler"
+        log_format = "logfmt"
+        forward_to = [
+          loki.process.cluster_events.receiver,
+        ]
+      }
+
+      // loki.process receives log entries from other loki components, applies one or more processing stages,
+      // and forwards the results to the list of receivers in the component's arguments.
+      loki.process "cluster_events" {
+        forward_to = [loki.write.default.receiver]
+
+        stage.static_labels {
+          values = {
+            cluster = "vienna",
+          }
+        }
+
+        stage.labels {
+          values = {
+            kubernetes_cluster_events = "job",
+          }
+        }
+      }
+
+
+      // Creates a receiver for OTLP gRPC.
+      // You can easily add receivers for other protocols by using the correct component
+      // from the reference list at: https://grafana.com/docs/alloy/latest/reference/components/
+      otelcol.receiver.otlp "otlp_receiver" {
+        // Listen on all available bindable addresses on port 4317 (which is the
+        // default OTLP gRPC port) for the OTLP protocol.
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+
+        // Output straight to the OTLP gRPC exporter. We would usually do some processing
+        // first, most likely batch processing, but for this example we pass it straight
+        // through.
+        output {
+          traces = [
+            otelcol.exporter.otlp.tempo.input,
+          ]
+        }
+      }
+
+      // Define an OTLP gRPC exporter to send all received traces to GET.
+      // The unique label 'tempo' is added to uniquely identify this exporter.
+      otelcol.exporter.otlp "tempo" {
+          // Define the client for exporting.
+          client {
+              // Send to the locally running Tempo instance, on port 4317 (OTLP gRPC).
+              endpoint = "http://{{ tempo_endpoint }}:4317"
+              // Disable TLS for OTLP remote write.
+              tls {
+                  // The connection is insecure.
+                  insecure = true
+                  // Do not verify TLS certificates when connecting.
+                  insecure_skip_verify = true
+              }
+          }
+      }
