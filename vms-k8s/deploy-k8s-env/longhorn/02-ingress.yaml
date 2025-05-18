@@ -1,0 +1,45 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-noslash
+  namespace: longhorn-system
+spec:
+  redirectRegex:
+    permanent: true
+    regex: ^(https?://[^/]+/longhorn)$
+    replacement: ${1}/
+---
+
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: replacepath-longhorn-ui
+  namespace: longhorn-system
+spec:
+  stripPrefix:
+    prefixes:
+      - /longhorn
+---
+
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: longhorn-dashboard
+  namespace: longhorn-system
+spec:
+  entryPoints:
+    - websecure 
+  routes:
+    - match: PathPrefix(`/longhorn`)
+      kind: Rule
+      middlewares:
+        {{ zitadel_middleware | indent(8) }}
+        - name: redirect-noslash
+          namespace: longhorn-system
+        - name: replacepath-longhorn-ui
+          namespace: longhorn-system
+      services:
+        - name: longhorn-frontend
+          port: 80
+          namespace: longhorn-system
+  tls: {}

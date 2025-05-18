@@ -1,0 +1,178 @@
+  - name: set vars
+    set_fact:
+      container_hostname: "{{ container_hostname_mask }}{{ item.role }}-{{ item.id }}"
+      container_vmid: "{{ container_vmid_mak }}{{ item.id }}"
+      container_ip: "{{ container_ip_mask }}{{ item.id }}"
+      container_mac: "{{ container_mac_mask }}{{ item.id }}"
+      container_memory: "{{ item.container_memory }}"
+      container_cores: "{{ item.container_cores }}"
+      container_disk_size: "{{ item.container_disk_size }}"
+      public_ip: "{{ control_public_ip if item.role == 'control' else worker_public_ip }}" 
+
+  - name: create vm
+    community.general.proxmox_kvm:
+      node            : '{{ proxmox_node }}'
+      api_host        : '{{ proxmox_node_ip }}'
+      api_user        : 'root@pam'
+      api_password    : '{{ proxmox_password }}'
+      newid           : '{{ container_vmid }}'
+      name            : '{{ container_hostname }}'
+      clone           : '{{ template_vm }}'
+    delegate_to       : localhost
+    register          : container  
+    retries: 3
+
+  - name: print info
+    ansible.builtin.debug:
+      msg             : '{{ container }}'
+
+  - name: start vm
+    proxmox_kvm:
+      api_host        : '{{ proxmox_node_ip }}'
+      api_user        : 'root@pam'
+      api_password    : '{{ proxmox_password }}'
+      vmid            : '{{ container_vmid }}'
+      node            : '{{ proxmox_node }}'
+      state           : started
+    delegate_to       : localhost
+    retries: 3
+
+  - name: get vm info
+    community.general.proxmox_vm_info:
+      api_host        : '{{ proxmox_node_ip }}'
+      api_user        : 'root@pam'
+      api_password    : '{{ proxmox_password }}'
+      vmid            : '{{ container_vmid }}'
+      config          : current
+    delegate_to       : localhost
+    register          : vm_info
+    until: vm_info is defined and vm_info.proxmox_vms is defined and vm_info.proxmox_vms[0].status == "running"
+    retries: 30
+    delay: 1  
+
+  # - name: print info [DEBUG]
+  #   ansible.builtin.debug:
+  #     msg             : '{{ vm_info }}'
+
+  - block:
+      - name: configure vm resources
+        shell: "{{ cmd_item }}"
+        with_items:
+          - qm set {{ container_vmid }} --memory {{ container_memory }}
+          - qm set {{ container_vmid }} --onboot 1
+          - qm set {{ container_vmid }} --cores {{ container_cores }}
+        loop_control:
+          loop_var: cmd_item
+
+      - name: configure vm disk resources
+        shell: "{{ cmd_item }}"
+        with_items:
+          - qm disk resize {{ container_vmid }} scsi0 {{ container_disk_size }}
+          - qm guest exec {{ container_vmid }} -- sudo growpart /dev/sda 2
+          - qm guest exec {{ container_vmid }} -- sudo resize2fs /dev/sda2
+        loop_control:
+          loop_var: cmd_item
+        when: vm_info.proxmox_vms[0].config.scsi0 is search('size=5G')
+
+      - name: configure vm network
+        shell: "{{ cmd_item }}"
+        with_items:
+          - qm set {{ container_vmid }} --net0 virtio,macaddr={{ container_mac }},bridge=vmbr0,tag={{ container_vlan_id }}
+          - qm set {{ container_vmid }} --nameserver 192.168.{{ container_vlan_id }}.1
+          - qm guest exec {{ container_vmid }} -- sh -c "echo '{{ container_hostname }}' > /etc/hostname"
+          - qm guest exec {{ container_vmid }} -- sh -c "echo '127.0.0.1 localhost {{ container_hostname }}' > /etc/hosts"
+        loop_control:
+          loop_var: cmd_item
+        when: not (vm_info.proxmox_vms[0].config.net0 is search('tag={{ container_vlan_id }}'))
+
+      - name: config ssh
+        shell: "{{ cmd_item }}"
+        with_items:
+          - qm guest exec {{ container_vmid }} -- mkdir -p /root/.ssh
+          - qm guest exec {{ container_vmid }} -- chmod 700 /root/.ssh
+          - qm guest exec {{ container_vmid }} -- chown root:root /root/.ssh
+          - qm guest exec {{ container_vmid }} -- bash -c "echo {{ lookup('file', '{{ container_ssh_file }}') }} > /root/.ssh/authorized_keys"
+          - qm guest exec {{ container_vmid }} -- chmod 600 /root/.ssh/authorized_keys
+        loop_control:
+          loop_var: cmd_item
+
+          
+      - name: restart vm
+        proxmox_kvm:
+          api_host: '{{ proxmox_node_ip }}'
+          api_user: 'root@pam'
+          api_password: '{{ proxmox_password }}'
+          name        : '{{ container_hostname }}'
+          node        : '{{ proxmox_node }}'
+          state       : restarted
+        delegate_to: localhost
+        retries: 5
+        delay: 10
+        
+
+      - name: Wait for VM to start running
+        community.general.proxmox_vm_info:
+          api_host: '{{ proxmox_node_ip }}'
+          api_user: 'root@pam'
+          api_password: '{{ proxmox_password }}'
+          name        : '{{ container_hostname }}'
+          node        : '{{ proxmox_node }}'
+          config      : current
+        delegate_to: localhost
+        register: uvm_info
+        until: uvm_info is defined and uvm_info.proxmox_vms is defined and uvm_info.proxmox_vms[0].status == "running"
+        retries: 30
+        delay: 1        
+
+      - name: tag vm is ready
+        shell: 'qm set {{ container_vmid }} --tags {{ container_tag }}'
+
+      - name: Migrate VM on dedicated node
+        community.general.proxmox_kvm:
+          api_host    : '{{ proxmox_node_ip }}'
+          api_user    : 'root@pam'
+          api_password: '{{ proxmox_password }}'
+          name        : '{{ container_hostname }}'
+          node        : '{{ item.target_node }}'
+          migrate     : true
+        delegate_to   : localhost
+        retries: 3
+
+    when: vm_info.proxmox_vms[0].tags is not defined or vm_info.proxmox_vms[0].tags != '{{ container_tag }}'
+
+  - name: create host
+    add_host:
+      name: '{{ container_hostname }}'
+      groups: ['k8s-nodes', '{{ item.role }}-nodes']
+      ansible_host: '{{ container_ip }}' ## dhcp should assign the ip based on mac
+      ansible_user: 'root'
+      ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      node_id: '{{ item.id }}'
+      node_ip: '{{ container_ip }}'
+      node_name: '{{ container_hostname }}'
+      node_role: '{{ item.role }}'
+      node_group: '{{ item.role }}-nodes'
+      public_ip: '{{ public_ip }}'
+      domain_name: '{{ domain_name }}'
+
+  - name: collect vars for static inventory
+    set_fact:
+      node:
+        ansible_host: '{{ container_ip }}' ## dhcp should assign the ip based on mac
+        ansible_user: 'root'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+        node_name: '{{ container_hostname }}'
+        node_role: '{{ item.role }}'
+        public_ip: '{{ public_ip }}'
+        domain_name: '{{ domain_name }}'
+
+  - name: add node to array
+    set_fact:
+      nodes: "{{ nodes + [node] }}"
+
+  # add record to local ssh config
+  #
+  - import_tasks: ../ansible/add-local-ssh-config.yaml
+    vars:
+      hostname: '{{ container_hostname }}'
+      host: '{{ container_ip }}'

@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }}
+  labels:
+    {{ labels | indent(4) }}
+    {{ prometheus_label | indent(4) }}              # Change this to match your Prometheus Operator's 'release' label
+spec:
+  selector:
+    matchLabels:
+      {{ selectors | indent(6) }}
+  namespaceSelector:
+    matchNames:
+      - {{ app_namespace }}                         # Namespace where MinIO services live
+  endpoints:
+    - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`)
+      path: /minio/prometheus/metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+    - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`) 
+      path: /minio/v2/metrics/cluster
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http  

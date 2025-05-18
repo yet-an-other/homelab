@@ -1,0 +1,32 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-prefix-traefik
+  namespace: {{ traefik_namespace }}
+spec:
+  stripPrefix:
+    prefixes:
+      - traefik/
+    # forceSlash: true
+---
+
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: '{{ traefik_app_name }}-dashboard'
+  namespace: {{ traefik_namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ domain_fqdn }}`) && PathRegexp(`^/traefik(/?)*`)
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService
+      middlewares:
+        {{ zitadel_middleware | indent(8) }}
+        - name: strip-prefix-traefik
+          namespace: {{ traefik_namespace }}
+  tls: {}
+

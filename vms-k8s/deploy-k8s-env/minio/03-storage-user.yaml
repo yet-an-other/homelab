@@ -1,0 +1,29 @@
+apiVersion: v1
+data:
+  CONSOLE_ACCESS_KEY: {{ minio_console_user | b64encode }}          
+  CONSOLE_SECRET_KEY: {{ minio_console_password | b64encode }}
+kind: Secret
+metadata:
+  name: storage-user
+  namespace: {{ app_namespace }}
+type: Opaque
+
+
+
+# URL='minio-hl.minio:9000'
+# USERNAME=''
+# PASSWORD=''
+# MINIO_PATH="/"
+
+# # Static Vars
+# DATE=$(date -R --utc)
+# CONTENT_TYPE='application/zstd'
+# SIG_STRING="GET\n\n${CONTENT_TYPE}\n${DATE}\n${MINIO_PATH}"
+# SIGNATURE=`echo -en ${SIG_STRING} | openssl sha1 -hmac ${PASSWORD} -binary | base64`
+# PROTOCOL="https"
+
+# curl -k -H "Host: $URL" \
+#     -H "Date: ${DATE}" \
+#     -H "Content-Type: ${CONTENT_TYPE}" \
+#     -H "Authorization: AWS ${USERNAME}:${SIGNATURE}" \
+#     ${PROTOCOL}://$URL${MINIO_PATH}

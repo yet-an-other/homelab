@@ -1,4 +1,5 @@
 .vscode
 dynamic_*
-secret*
+secret.*
 tmp_*
+generated.*

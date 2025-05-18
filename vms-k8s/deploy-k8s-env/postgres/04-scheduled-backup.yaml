@@ -1,0 +1,22 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: '{{ pg_name }}-backup'
+  namespace: {{ app_namespace }}
+spec:
+  schedule: "0 0 0 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: {{ pg_name }}
+
+---
+
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: '{{ pg_name }}-backup-once'
+  namespace: {{ app_namespace }}
+spec:
+  backupOwnerReference: self
+  cluster:
+    name: {{ pg_name }}

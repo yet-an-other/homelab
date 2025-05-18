@@ -1,0 +1,16 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: k8s-certificate
+  namespace: default
+  annotations:
+    cert-manager.io/issuer-kind: ClusterIssuer
+    cert-manager.io/issuer-name: letsencrypt-dns
+    cert-manager.io/acme-challenge-type: dns01
+    cert-manager.io/dns01-provider: cloudflare
+spec:
+  secretName: {{ tls_secret_name }}
+  issuerRef:
+    name: letsencrypt-dns
+    kind: ClusterIssuer
+  dnsNames: {{ ssl_hosts }}

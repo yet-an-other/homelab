@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ -z "$1" ]; then
-    echo "Usage: apply.sh <folder>"
+    echo "Usage: ./apply.sh <folder>"
     exit 1
 fi
 

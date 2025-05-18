@@ -1,0 +1,32 @@
+- name: Setup worker nodes
+  hosts: '{{ control_nodes }}'
+  become: true
+  gather_facts: true
+  tasks:
+
+    - name: Join the Worker nodes with master
+      shell: "{{ hostvars['K8S_JOIN_HOLDER']['cp_join_command'] }}"
+      register: is_joined
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+    - debug:
+        msg: "{{ is_joined.stdout }}"
+
+    - name: Remove the cache directory.
+      ansible.builtin.file: 
+        path: ~/.kube/cache
+        state: absent
+
+    - name: Copy /etc/kubernetes/admin.conf to user home directory ~/.kube/config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: '{{ item}}'
+        remote_src: yes
+        mode: 0644
+      with_items:
+          - ~/.kube/config
+
+    # - name: Remove master/control roles
+    #   ignore_errors: true
+    #   command: kubectl taint nodes --all node-role.kubernetes.io/control-plane-

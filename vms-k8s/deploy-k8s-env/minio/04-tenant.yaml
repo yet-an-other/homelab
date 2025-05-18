@@ -1,0 +1,52 @@
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }}
+  labels:
+    {{ labels | indent(4) }}
+spec:
+  features:
+    ## Specify a list of domains used to access MinIO and Console
+    domains:
+      console: 'https://{{ domain_fqdn }}/minio/'
+      
+  requestAutoCert: false
+  configuration:
+    name: storage-configuration
+  image: quay.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
+  mountPath: /export
+  pools:
+    - name: minio-pool
+      servers: 3
+      volumesPerServer: 2
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: {{ minio_storage_size }}
+          storageClassName: longhorn-local
+
+  users:
+    - name: storage-user
+
+  buckets:
+    - name: "loki-chunks"
+      region: "us-east-1"
+      objectLock: true
+    - name: "loki-ruler"
+      region: "us-east-1"
+      objectLock: true
+    - name: "loki-admin"
+      region: "us-east-1"
+      objectLock: true
+    - name: "tempo"
+      objectLock: true
+
+  #prometheusOperator: true
+
+    
+
+

@@ -1,0 +1,81 @@
+- name: Setup master node
+  hosts: '{{ master_node }}'
+  become: true
+  gather_facts: true
+  tasks:
+
+    ## Init Cluster
+    ##
+    - name: Create Cluster Certificate
+      shell: "kubeadm certs certificate-key > ~/.kube/cert_key"
+      args:
+        creates: ~/.kube/cert_key
+
+    - name: Get the certificate key
+      shell: "cat ~/.kube/cert_key"
+      register: certificate_key
+ 
+    - name: Intilizing Kubernetes Cluster
+      command: |
+        kubeadm init \
+        --control-plane-endpoint={{ public_ip }}:6443 \
+        --apiserver-bind-port 6446 \
+        --pod-network-cidr=10.244.0.0/16 \
+        --cri-socket=unix:///run/containerd/containerd.sock \
+        --apiserver-cert-extra-sans={{ control_domain_name }},{{ public_domain_name }} \
+        --certificate-key={{ certificate_key.stdout }} \
+        --upload-certs
+      args:
+        creates: /etc/kubernetes/manifests/kube-apiserver.yaml
+
+    - name: Copy /etc/kubernetes/admin.conf to user home directory ~/.kube/config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: '{{ item}}'
+        remote_src: yes
+        mode: 0644
+      with_items:
+          - ~/.kube/config
+
+    - name: Remove the cache directory.
+      ansible.builtin.file: 
+        path: ~/.kube/cache
+        state: absent
+
+    - name: Copy kube config to localhost
+      ansible.builtin.fetch:
+        src: ~/.kube/config
+        dest: ~/remote-kube/{{ ansible_host }}/
+        flat: yes
+
+    - name: get host name
+      shell: "hostname"
+      register: host_name 
+
+    ## install kube network
+    ##
+    - name: Create Pod Network & RBAC.
+      ansible.builtin.command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml 
+
+    - name: Get the token for joining the nodes with Kuberentes master.
+      shell: "kubeadm token create"
+      register: kubernetes_join_token
+
+    # Get cert info
+    - name: Get CA certificate hash
+      community.crypto.x509_certificate_info:
+        path: /etc/kubernetes/pki/ca.crt
+      register: k8s_pki_ca
+
+    - name: Add join command to dummy host
+      add_host:
+        name:   "K8S_JOIN_HOLDER"
+        cp_join_command: 'kubeadm join {{ public_ip }}:6443 --token {{ kubernetes_join_token.stdout }} --discovery-token-ca-cert-hash sha256:{{ k8s_pki_ca["public_key_fingerprints"]["sha256"] | replace(":","") }} --control-plane --certificate-key {{ certificate_key.stdout }} --apiserver-bind-port 6446'
+        join_command: 'kubeadm join {{ public_ip }}:6443 --token {{ kubernetes_join_token.stdout }} --discovery-token-ca-cert-hash sha256:{{ k8s_pki_ca["public_key_fingerprints"]["sha256"] | replace(":","") }}'
+        #cp_join_command: "{{kubernetes_join_command.stdout_lines[0]}} --control-plane --certificate-key {{certificate_key_output.stdout}}" 
+
+    - debug:
+        msg: "{{ hostvars['K8S_JOIN_HOLDER']['cp_join_command'] }}"
+    - debug:
+        msg: "{{ hostvars['K8S_JOIN_HOLDER']['join_command'] }}"

@@ -12,11 +12,11 @@
             "settings": {
                 "clients": [
                     {
-                        "id": "***REMOVED***",
+                        "id": "{{ xray_client_id1 }}",
                         "flow": "xtls-rprx-vision"
                     },
                     {
-                        "id": "***REMOVED***",
+                        "id": "{{ xray_client_id2 }}",
                         "flow": "xtls-rprx-vision"
                     }
                 ],

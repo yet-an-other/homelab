@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{ selectors | indent(6) }}
+  template:
+    metadata:
+      labels:
+        {{ labels | indent(8) }}
+    spec:
+      containers:
+        - name: {{ app_name }}
+          image: quay.io/oauth2-proxy/oauth2-proxy:latest
+          ports:
+            - containerPort: {{ app_port }}
+              name: http
+          args:
+            - --provider=oidc
+            - --oidc-issuer-url=https://{{ auth_domain_name }}
+            - --client-id={{ zitadel_oa2p_id }}
+            - --client-secret=whatever
+            - --cookie-secret=kookie-secret016
+            - --code-challenge-method=S256 
+            - --email-domain=*
+            - --whitelist-domain=.{{ domain_name }}
+            - --upstream=static://202 
+            - --http-address=0.0.0.0:{{ app_port }}
+            - --redirect-url=https://{{ auth_domain_name }}/oauth2/callback
+            - --cookie-domain=.{{ domain_name }}
+            - --cookie-secure=false
+            - --skip-provider-button=true
+            - --pass-access-token=true
+            - --set-authorization-header=true
+            - --pass-user-headers=true
+            - --reverse-proxy=true
+            - --skip-auth-preflight=true
+
+            - --ssl-insecure-skip-verify=true                           
+            - --ssl-upstream-insecure-skip-verify
+

@@ -1,0 +1,72 @@
+replicas: 1
+
+tempo:
+  repository: grafana/tempo
+  tag: ""
+  pullPolicy: IfNotPresent
+
+
+  updateStrategy: RollingUpdate
+  resources: {}
+  #  requests:
+  #    cpu: 1000m
+  #    memory: 4Gi
+  #  limits:
+  #    cpu: 2000m
+  #    memory: 6Gi
+
+  memBallastSizeMbs: 1024
+  multitenancyEnabled: false
+  # -- If true, Tempo will report anonymous usage data about the shape of a deployment to Grafana Labs
+  reportingEnabled: false
+
+  retention: 24h
+
+  storage:
+    trace:
+      # tempo storage backend.
+      # Refers to: https://grafana.com/docs/tempo/latest/configuration/#storage
+      ## Use s3 for example
+      backend: s3
+      s3:
+        bucket: tempo                       
+        endpoint: 'minio.minio'  # api endpoint
+        access_key: {{ minio_console_user }}                                 
+        secret_key: {{ minio_console_password }}                                
+        insecure: true                                 
+      wal:
+        path: /var/tempo/wal
+
+
+
+  # Add custom volumes and mounts
+
+  extraVolumeMounts:
+    - name: tempo-wal
+      mountPath: /var/tempo/wal
+
+# -- securityContext for container
+securityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  runAsNonRoot: true
+
+serviceAccount:
+  # -- Specifies whether a ServiceAccount should be created
+  create: true
+
+persistence:
+  enabled: false
+    # -- Enable StatefulSetAutoDeletePVC feature
+  enableStatefulSetAutoDeletePVC: false
+  # storageClassName: local-path
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+# -- Volumes to add
+extraVolumes:
+  - name: tempo-wal
+    emptyDir:
+       sizeLimit: 1Gi   # Limit to 1GB
