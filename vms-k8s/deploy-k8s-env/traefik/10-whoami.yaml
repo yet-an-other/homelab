@@ -52,7 +52,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`{{ domain_fqdn }}`) && PathPrefix(`/whoami`)
+    - match: Host(`{{ main_domain_name }}`) && PathPrefix(`/whoami`)
       kind: Rule
       services:
         - name: whoami

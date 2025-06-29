@@ -8,7 +8,7 @@ zitadel:
       Enabled: false
     Database:
       Postgres:
-        Host: {{ pg_host_rw }}
+        Host: {{ pgi_host_rw }}
         Port: 5432
         Database: {{ zitadel_db_name }}
         MaxOpenConns: 20
@@ -16,13 +16,13 @@ zitadel:
         MaxConnLifetime: 30m
         MaxConnIdleTime: 5m
         User:
-          Username: {{ pg_user }}
-          Password: {{ pg_password }}
+          Username: {{ pgi_user }}
+          Password: {{ pgi_password }}
           SSL:
             Mode: disable
         Admin:
-          Username: {{ pg_user }}
-          Password: {{ pg_password }}
+          Username: {{ pgi_user }}
+          Password: {{ pgi_password }}
           ExistingDatabase: {{ zitadel_db_name }}
           SSL:
             Mode: disable

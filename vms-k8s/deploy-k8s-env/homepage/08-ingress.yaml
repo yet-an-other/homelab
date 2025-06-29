@@ -8,7 +8,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`{{ domain_fqdn }}`)
+      match: Host(`{{ main_domain_name }}`)
       middlewares:
         - name: oauth2-proxy-forward-auth
           namespace: auth

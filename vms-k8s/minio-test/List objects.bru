@@ -1,0 +1,21 @@
+meta {
+  name: List objects
+  type: http
+  seq: 4
+}
+
+get {
+  url: https://{{host}}/{{bucket}}/
+  body: none
+  auth: inherit
+}
+
+tests {
+    test("Status code is 200", function() {
+      expect(res.status).to.equal(200);
+    });
+    
+    test("Response contains our file", function() {
+      expect(res.body).to.include("testfile.txt");
+    });
+}

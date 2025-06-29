@@ -9,7 +9,9 @@ spec:
   features:
     ## Specify a list of domains used to access MinIO and Console
     domains:
-      console: 'https://{{ domain_fqdn }}/minio/'
+      # minio:
+      #   - {{ s3_domain_name }}
+      console: 'https://{{ main_domain_name }}/minio/'
       
   requestAutoCert: false
   configuration:
@@ -26,24 +28,18 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: {{ minio_storage_size }}
-          storageClassName: longhorn-local
+              storage: {{ minio_storage_size }}         
+          storageClassName: {{ minio_storage_class_name }}
 
   users:
     - name: storage-user
 
   buckets:
-    - name: "loki-chunks"
+    - name: "loki"
       region: "us-east-1"
-      objectLock: true
-    - name: "loki-ruler"
-      region: "us-east-1"
-      objectLock: true
-    - name: "loki-admin"
-      region: "us-east-1"
-      objectLock: true
+      objectLock: false
     - name: "tempo"
-      objectLock: true
+      objectLock: false
 
   #prometheusOperator: true
 

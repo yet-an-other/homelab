@@ -1,0 +1,17 @@
+meta {
+  name: Create Bucket
+  type: http
+  seq: 2
+}
+
+put {
+  url: https://{{host}}/{{bucket}}/
+  body: none
+  auth: inherit
+}
+
+tests {
+    test("Status code is 200", function() {
+      expect(res.status).to.equal(200);
+    });
+}

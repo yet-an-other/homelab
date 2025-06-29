@@ -1,0 +1,43 @@
+- name: generate suffix
+  set_fact:
+    suffix: "{{ now(utc=true,fmt='%Y-%m-%d') }}-{{ lookup('community.general.random_string', length=6, special=false) }}" 
+
+- name: deploy postgresql cluster
+  block:
+    - name: deploy postgresql crds
+      kubernetes.core.k8s:
+        state: present
+        src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.20/releases/cnpg-1.20.6.yaml
+
+    - name: Wait for CNPG controller to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: cnpg-system
+        label_selectors:
+          - app.kubernetes.io/name=cloudnative-pg
+      register: cnpg_controller_pods
+      until: 
+        - cnpg_controller_pods.resources is defined
+        - cnpg_controller_pods.resources | length > 0
+        - cnpg_controller_pods.resources | map(attribute='status.phase') | list | unique == ['Running']
+        - cnpg_controller_pods.resources | map(attribute='status.containerStatuses') | flatten | map(attribute='ready') | select('equalto', false) | list | length == 0
+      retries: 15
+      delay: 10            
+
+    - name: deploy postgresql database
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'postgres/00-namespace.yaml') }}"      
+        - "{{ lookup('template', 'postgres/01-pgi-secret.yaml') }}"
+        - "{{ lookup('template', 'postgres/04-aws-secret.yaml') }}"
+        - "{{ lookup('template', 'postgres/05-scheduled-backup.yaml') }}"                
+        - "{{ lookup('template', 'postgres/06-pgi-cluster.yaml') }}"
+  vars:
+    app_namespace: '{{ pg_namespace }}'
+    pgi_storage_size: 2Gi
+    s3_pg_bucket: ib.pg-backup
+    s3_pg_working_path: 'pg-{{ env }}'
+    s3_pgi_backup: 'pg-inf-base' # if empty, will be create dbs from scratch
+    aws_secret_name: aws-secret

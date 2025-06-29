@@ -1,0 +1,26 @@
+- name: deploy oauth2-proxy
+  kubernetes.core.k8s:
+    state: present
+    definition: '{{ item }}'
+  loop:
+    - "{{ lookup('template', 'oauth2proxy/01-deployment.yaml') }}"
+    - "{{ lookup('template', 'oauth2proxy/02-service.yaml') }}"
+    - "{{ lookup('template', 'oauth2proxy/03-shared-middlewares.yaml') }}"
+    - "{{ lookup('template', 'oauth2proxy/04-ingress.yaml') }}"
+
+    ## at this point we should update protected sites with oauth2-proxy middleware  
+    - "{{ lookup('template', 'traefik/07-ingress-dashboard.yaml') }}"
+    - "{{ lookup('template', 'longhorn/02-ingress.yaml') }}" # this is for longhorn
+  vars:
+    app_name: oauth2-proxy
+    app_namespace: '{{ auth_namespace }}'
+    app_port: 4180
+    selectors: 'app.kubernetes.io/name: {{ app_name }}'
+    labels: |
+      app.kubernetes.io/name: {{ app_name }}
+      app.kubernetes.io/instance: {{ app_namespace }}
+    zitadel_middleware: |
+      - name: oauth2-proxy-auth-error
+        namespace: {{ app_namespace }}
+      - name: oauth2-proxy-forward-auth
+        namespace: {{ app_namespace }}

@@ -1,0 +1,32 @@
+- name: install minio
+  block:
+    - name: deploy minio operator
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('kubernetes.core.kustomize', dir='github.com/minio/operator?ref=' + app_version) }}"
+
+    - name: deploy minio cluster
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'minio/00-namespace.yaml') }}"
+        - "{{ lookup('template', 'minio/01-cluster-role.yaml') }}"
+        - "{{ lookup('template', 'minio/02-storage-configuration.yaml') }}"
+        - "{{ lookup('template', 'minio/03-storage-user.yaml') }}"
+        - "{{ lookup('template', 'minio/04-tenant.yaml') }}"
+        - "{{ lookup('template', 'minio/05-ingress.yaml') }}"
+        - "{{ lookup('template', 'minio/06-service.yaml') }}"
+        - "{{ lookup('template', 'minio/07-service-monitor.yaml') }}"
+  vars:
+    app_name: minio
+    app_namespace: minio
+    app_version: v7.1.0
+    minio_storage_size: 5Gi
+    labels: |
+      app.kubernetes.io/version: {{ app_version }}
+      app.kubernetes.io/name: {{ app_name}}
+      app.kubernetes.io/instance: {{ app_namespace }}
+      v1.min.io/tenant: {{ app_name }} 
+    selectors: |
+      v1.min.io/tenant: {{ app_name }}

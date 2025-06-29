@@ -10,8 +10,6 @@
 ###
 - import_playbook: 2-create-first-cp.yaml
   vars:
-    control_domain_name: 'k8s.{{ domain_name }}'
-    public_domain_name: 'kuber.{{ domain_name }}'
     master_node: control-nodes[0]
     
 ### create rest control plane nodes

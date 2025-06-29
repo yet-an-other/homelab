@@ -19,7 +19,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`{{ domain_fqdn }}`) && PathRegexp(`^/traefik(/?)*`)
+    - match: Host(`{{ main_domain_name }}`) && PathRegexp(`^/traefik(/?)*`)
       kind: Rule
       services:
         - name: api@internal

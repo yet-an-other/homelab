@@ -1,0 +1,38 @@
+- name: Deploy zitadel
+  block:
+    - name: Wait for PostgreSQL cluster to be ready
+      kubernetes.core.k8s_info:
+        kind: Cluster
+        api_version: postgresql.cnpg.io/v1
+        namespace: "{{ pg_namespace }}"
+        name: "{{ pgi_name }}"
+      register: pg_cluster
+      until:
+        - pg_cluster.resources is defined
+        - pg_cluster.resources | length > 0
+        - pg_cluster.resources[0].status is defined
+        - pg_cluster.resources[0].status.readyInstances is defined
+        - pg_cluster.resources[0].status.readyInstances == pg_cluster.resources[0].spec.instances
+        - pg_cluster.resources[0].status.phase == "Cluster in healthy state"
+      retries: 40
+      delay: 15
+
+    - name: deploy zitadel ingress
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'zitadel/00-namespace.yaml') }}"
+        - "{{ lookup('template', 'zitadel/02-ingress.yaml') }}"
+
+    - name: deploy zitadel
+      delegate_to: localhost
+      kubernetes.core.helm:
+        kubeconfig: '{{ kube_config }}'
+        name: '{{ app_name }}'
+        chart_ref: zitadel/zitadel
+        release_namespace: '{{ app_namespace }}'
+        values: "{{ lookup('template', 'zitadel/01-values.yaml') | from_yaml }}"
+  vars:
+    app_name: zitadel
+    app_namespace: '{{ auth_namespace }}'

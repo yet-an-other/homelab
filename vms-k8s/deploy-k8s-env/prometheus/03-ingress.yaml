@@ -7,7 +7,7 @@ spec:
   entryPoints:
     - websecure 
   routes:
-    - match: Host(`{{ domain_fqdn }}`) && PathPrefix(`/grafana`) 
+    - match: Host(`{{ main_domain_name }}`) && PathPrefix(`/grafana`) 
       kind: Rule
       services:
         - name: '{{ app_name }}-grafana' 

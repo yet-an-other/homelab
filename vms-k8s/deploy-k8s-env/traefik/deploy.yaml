@@ -1,0 +1,32 @@
+- name: deploy traefik
+  block:
+    - name: deploy traefik CRDs
+      kubernetes.core.k8s:
+        state: present
+        src: '{{ item }}'
+      with_items:
+        - https://raw.githubusercontent.com/traefik/traefik/{{ app_version }}/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+
+    - name: deploy traefik
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'traefik/00-namespace.yaml') }}"
+        - "{{ lookup('template', 'traefik/01-cluster-role.yaml') }}"
+        - "{{ lookup('template', 'traefik/02-service-account.yaml') }}"
+        - "{{ lookup('template', 'traefik/03-cluster-role-binding.yaml') }}"
+        - "{{ lookup('template', 'traefik/04-tls-store.yaml') }}"
+        - "{{ lookup('template', 'traefik/05-deployment.yaml') }}"
+        - "{{ lookup('template', 'traefik/06-service.yaml') }}"
+#        - "{{ lookup('template', 'traefik/07-ingress-dashboard.yaml') }}"
+        - "{{ lookup('template', 'traefik/08-service-monitor.yaml') }}"
+        - "{{ lookup('template', 'traefik/10-whoami.yaml') }}"
+  vars:
+    app_replicas: 3
+    selectors: 'app.kubernetes.io/name: {{ app_name }}'
+    labels: |
+      app.kubernetes.io/version: "{{ app_version }}"
+      app.kubernetes.io/name: {{ app_name }}
+      app.kubernetes.io/instance: {{ app_namespace }}
+    zitadel_middleware: ""

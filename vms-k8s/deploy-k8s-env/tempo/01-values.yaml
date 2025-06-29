@@ -17,10 +17,17 @@ tempo:
 
   memBallastSizeMbs: 1024
   multitenancyEnabled: false
+
   # -- If true, Tempo will report anonymous usage data about the shape of a deployment to Grafana Labs
   reportingEnabled: false
 
   retention: 24h
+
+  metricsGenerator:
+    # -- If true, enables Tempo's metrics generator (https://grafana.com/docs/tempo/next/metrics-generator/)
+    enabled: true
+    remoteWriteUrl: "http://{{ prometheus_endpoint }}:9090/api/v1/write"
+
 
   storage:
     trace:
@@ -30,7 +37,7 @@ tempo:
       backend: s3
       s3:
         bucket: tempo                       
-        endpoint: 'minio.minio'  # api endpoint
+        endpoint: '{{ s3_endpoint }}'  # api endpoint
         access_key: {{ minio_console_user }}                                 
         secret_key: {{ minio_console_password }}                                
         insecure: true                                 

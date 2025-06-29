@@ -1,0 +1,30 @@
+#cloud-config
+
+# Update and upgrade packages
+package_update: true
+package_upgrade: true
+
+# Write SSH configuration file to listen on port 9022
+write_files:
+  - path: /etc/ssh/sshd_config.d/9022-port.conf
+    content: |
+      # Listen for SSH connections on port 9022
+      Port 22
+      Port 9022
+    permissions: '0644'
+
+# Run commands to apply the new configuration
+runcmd:
+  - ufw allow 9022/tcp || true
+  - ufw reload || true
+  - echo "SSH configured to listen on both port 22 and port 9022" | tee /root/ssh-port-config.log
+  - echo "System will reboot in 5 seconds to apply SSH configuration..." | tee -a /root/ssh-port-config.log
+  - sleep 5
+
+# Reboot the system to ensure SSH picks up the new port configuration
+power_state:
+  delay: "now"
+  mode: reboot
+  message: "Rebooting to apply SSH port configuration"
+  timeout: 30
+  condition: True

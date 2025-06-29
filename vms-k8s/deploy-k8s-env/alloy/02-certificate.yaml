@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ app_name }}
+  namespace: {{ app_namespace }}
+spec:
+  secretName: '{{ app_name }}-tls'
+  dnsNames:
+    - "{{ otel_domain_name }}"
+  issuerRef:
+    name: letsencrypt-dns
+    kind: ClusterIssuer

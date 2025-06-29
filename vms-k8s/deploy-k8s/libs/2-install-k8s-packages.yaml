@@ -32,3 +32,23 @@
         path: ~/.kube
         state: directory
         mode: 0755
+
+    - name: add --node-ip flag to kubelet
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/default/kubelet
+        line: KUBELET_EXTRA_ARGS=--node-ip={{ internal_ip }}
+        state: present
+        create: yes
+
+    - name: Restart systemd
+      become: true
+      ansible.builtin.command: systemctl daemon-reload
+
+    - name: Restart kubelet
+      become: true
+      ansible.builtin.service:
+        name: kubelet
+        state: restarted
+        enabled: yes
+    

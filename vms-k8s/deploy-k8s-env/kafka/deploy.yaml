@@ -1,0 +1,25 @@
+  - name: deploy kafka
+    block:
+      - name: deploy kafka cluster
+        kubernetes.core.k8s:
+          state: present
+          definition: '{{ item }}'
+        loop:
+          - "{{ lookup('template', 'kafka/00-namespace.yaml') }}"
+
+      - name: deploy kafka crds
+        kubernetes.core.k8s:
+          state: present
+          src: https://strimzi.io/install/latest?namespace={{ app_namespace }}
+
+      - name: deploy kafka cluster
+        kubernetes.core.k8s:
+          state: present
+          definition: '{{ item }}'
+        loop:
+          - "{{ lookup('template', 'kafka/01-node-pool.yaml') }}"
+          - "{{ lookup('template', 'kafka/02-kafka-cluster.yaml') }}"
+    vars:
+      app_name: kafka
+      app_namespace: kafka
+      app_version: 3.9.0

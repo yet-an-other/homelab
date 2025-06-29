@@ -1,0 +1,27 @@
+  - name: install prometheus crds
+    block:
+      - name: Check if prometheus CRDs are already installed
+        kubernetes.core.k8s_info:
+          api_version: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          name: prometheuses.monitoring.coreos.com
+        register: prometheus_crds
+
+      - name: deploy namespace
+        kubernetes.core.k8s:
+          state: present
+          definition: '{{ item }}'
+        loop:
+          - "{{ lookup('template', 'prometheus/00-namespace.yaml') }}"
+
+      - name: deploy prometheus crds
+        delegate_to: localhost
+        kubernetes.core.helm:
+          kubeconfig: '{{ kube_config }}'
+          name: prometheus
+          release_namespace: '{{ app_namespace }}'
+          chart_ref: prometheus-community/kube-prometheus-stack
+          values: "{{ lookup('template', 'prometheus/01-crds-values.yaml') | from_yaml }}"
+        when: prometheus_crds.resources | length == 0
+    vars:
+      app_namespace: '{{ monitoring_namespace }}'

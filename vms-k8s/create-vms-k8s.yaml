@@ -32,12 +32,12 @@
     - name: create vms
       include_tasks: ./create-vm/1-create-vms.yaml
       loop:
-        - { id: '01', target_node: 'prox-n1', role: 'control', container_disk_size: '20G', container_cores: 2, container_memory: 2048 }
-        - { id: '02', target_node: 'prox-n2', role: 'control', container_disk_size: '20G', container_cores: 2, container_memory: 2048 }
-        - { id: '03', target_node: 'prox-n3', role: 'control', container_disk_size: '20G', container_cores: 2, container_memory: 2048 }
-        - { id: '10', target_node: 'prox-n1', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8096 }
-        - { id: '20', target_node: 'prox-n2', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8096 }
-        - { id: '30', target_node: 'prox-n3', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8096 }
+        - { id: '01', target_node: 'prox-n1', role: 'control', container_disk_size: '20G', container_cores: 4, container_memory: 4096 }
+        - { id: '02', target_node: 'prox-n2', role: 'control', container_disk_size: '20G', container_cores: 4, container_memory: 4096 }
+        - { id: '03', target_node: 'prox-n3', role: 'control', container_disk_size: '20G', container_cores: 4, container_memory: 4096 }
+        - { id: '10', target_node: 'prox-n1', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8192 }
+        - { id: '20', target_node: 'prox-n2', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8192 }
+        - { id: '30', target_node: 'prox-n3', role: 'worker', container_disk_size: '60G', container_cores: 4, container_memory: 8192 }
 
     - name: debug
       debug:

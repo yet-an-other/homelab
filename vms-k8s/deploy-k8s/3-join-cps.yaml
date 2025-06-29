@@ -5,7 +5,7 @@
   tasks:
 
     - name: Join the Worker nodes with master
-      shell: "{{ hostvars['K8S_JOIN_HOLDER']['cp_join_command'] }}"
+      shell: "{{ hostvars['K8S_JOIN_HOLDER']['cp_join_command'] }} --apiserver-advertise-address={{ internal_ip }}"
       register: is_joined
       args:
         creates: /etc/kubernetes/kubelet.conf

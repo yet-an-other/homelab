@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-ansible-playbook -i ../ansible/secret.inventory.yaml create-vms-k8s.yaml
+ansible-playbook -i ../ansible/inventory.secret.yaml create-vms-k8s.yaml
 
 ./deploy-k8s.sh proxmox
 

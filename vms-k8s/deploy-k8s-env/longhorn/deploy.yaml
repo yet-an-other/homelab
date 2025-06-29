@@ -1,0 +1,17 @@
+- name: deploy longhorn storage provider
+  block:
+    - name: deploy longhorn crd
+      kubernetes.core.k8s:
+        state: present
+        src: https://raw.githubusercontent.com/longhorn/longhorn/{{ app_version }}/deploy/longhorn.yaml
+
+    - name: deploy longhorn storage class
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'longhorn/00-storage-class-local.yaml') }}"
+        - "{{ lookup('template', 'longhorn/01-storage-class-spread.yaml') }}"
+#        - "{{ lookup('template', 'longhorn/02-ingress.yaml') }}"        
+  vars:
+    zitadel_middleware: ""
