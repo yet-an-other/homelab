@@ -15,14 +15,30 @@
       shell: "cat ~/.kube/cert_key"
       register: certificate_key
  
+    - name: Collect all internal IPs from inventory
+      set_fact:
+        all_internal_ips: "{{ groups['k8s-nodes'] | map('extract', hostvars, ['internal_ip']) | list }}"
+        all_public_ips: "{{ groups['k8s-nodes'] | map('extract', hostvars, ['ansible_host']) | unique | list }}"
+        all_lb_ips: "{{ groups['k8s-nodes'] | map('extract', hostvars, ['public_ip']) | unique | list }}"
+
+    - name: Prepare apiserver cert extra sans
+      set_fact:
+        cert_extra_sans: >-
+          {{ main_domain_name }},{{ ([internal_ip, public_ip] + all_internal_ips + all_public_ips + all_lb_ips) | unique | join(',') }}
+
+    - name: Display certificate extra sans
+      debug:
+        var: cert_extra_sans
+
     - name: Intilizing Kubernetes Cluster
       command: |
         kubeadm init \
         --control-plane-endpoint={{ public_ip }}:6443 \
-        --apiserver-bind-port 6446 \
+        --apiserver-bind-port=6446 \
+        --apiserver-advertise-address={{ internal_ip }} \
         --pod-network-cidr=10.244.0.0/16 \
         --cri-socket=unix:///run/containerd/containerd.sock \
-        --apiserver-cert-extra-sans={{ control_domain_name }},{{ public_domain_name }} \
+        --apiserver-cert-extra-sans={{ cert_extra_sans }} \
         --certificate-key={{ certificate_key.stdout }} \
         --upload-certs
       args:
@@ -45,7 +61,7 @@
     - name: Copy kube config to localhost
       ansible.builtin.fetch:
         src: ~/.kube/config
-        dest: ~/remote-kube/{{ ansible_host }}/
+        dest: ~/remote-kube/{{ cluster_env }}/
         flat: yes
 
     - name: get host name

@@ -1,14 +1,14 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: {{ pg_name }}
+  name: {{ pgi_name }}
   namespace: {{ app_namespace }}
 spec:
 
   instances: 3
 
   superuserSecret:
-    name: {{ pg_secret_name }}
+    name: {{ pgi_secret_name }}
 
   # PostgreSQL configuration
   postgresql:
@@ -18,7 +18,7 @@ spec:
 
   backup:
     barmanObjectStore:
-      destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_working_path }}"
+      destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_pg_working_path }}"
       s3Credentials:
         accessKeyId:
           name: {{ aws_secret_name }}
@@ -32,9 +32,9 @@ spec:
     retentionPolicy: "7d"
 
   externalClusters:
-    - name: {{ pg_name }}
+    - name: {{ pgi_name }}
       barmanObjectStore:
-        destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_backup_path }}"
+        destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_pgi_backup }}"
         s3Credentials:
           accessKeyId:
             name: {{ aws_secret_name }}
@@ -42,26 +42,26 @@ spec:
           secretAccessKey:
             name: {{ aws_secret_name }}
             key: aws_secret_key
-{% if s3_backup_path | length > 0 %}
+{% if s3_pgi_backup | length > 0 %}
   bootstrap:
     recovery:
-      source: {{ pg_name }}
+      source: {{ pgi_name }}
 {% else %}
   bootstrap:
     initdb:
       database: {{ zitadel_db_name }}
       secret:
-        name: {{ pg_secret_name }}
+        name: {{ pgi_secret_name }}
 
     initdb:
       database: grafana
       secret:
-        name: {{ pg_secret_name }}
+        name: {{ pgi_secret_name }}
 {% endif %}
 
   storage:
-    storageClass: longhorn-local
-    size: {{ pg_storage_size }}
+    storageClass: {{ pg_storage_class_name }}
+    size: {{ pgi_storage_size }}
 
   # Pod distribution - ensure PostgreSQL instances are on different nodes
   affinity:

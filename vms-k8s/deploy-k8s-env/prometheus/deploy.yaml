@@ -1,0 +1,21 @@
+  - name: deploy prometheus & grafana
+    block: 
+      - name: deploy objects
+        kubernetes.core.k8s:
+          state: present
+          definition: '{{ item }}'
+        loop:
+          - "{{ lookup('template', 'postgres/01-pgi-secret.yaml') }}"
+          - "{{ lookup('template', 'prometheus/03-ingress.yaml') }}"
+          - "{{ lookup('template', 'prometheus/04-metrics-server.yaml') }}"        
+
+      - name: deploy prometheus & grafana
+        delegate_to: localhost
+        kubernetes.core.helm:
+          kubeconfig: '{{ kube_config }}'
+          name: prometheus
+          chart_ref: prometheus-community/kube-prometheus-stack
+          release_namespace: '{{ app_namespace }}'
+          values: "{{ lookup('template', 'prometheus/02-prometheus-values.yaml') | from_yaml }}"
+    vars:
+      app_name: 'prometheus'

@@ -1,0 +1,32 @@
+meta {
+  name: List Buckets
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://{{host}}
+  body: none
+  auth: awsv4
+}
+
+auth:awsv4 {
+  accessKeyId: {{accessKey}}
+  secretAccessKey: {{secretKey}}
+  sessionToken: 
+  service: s3
+  region: us-east-1
+  profileName: 
+}
+
+tests {
+  
+  test("Status code is 200", function() {
+      expect(res.status).to.equal(200);
+    });
+  
+  test("Response has buckets", function() {
+      expect(res.body).to.include("<Buckets>");
+    });
+  
+}

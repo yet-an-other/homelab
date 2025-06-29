@@ -12,14 +12,14 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: '{{ app_name }}'
+  name: '{{ app_name }}' #-console
   namespace: {{ app_namespace }}
 spec:
   entryPoints:
     - websecure  # Use HTTPS entry point
 
   routes:
-    - match: Host(`{{ domain_fqdn }}`) && PathPrefix(`/minio`)
+    - match: Host(`{{ main_domain_name }}`) && PathPrefix(`/minio`)
       kind: Rule
       middlewares:
         - name: strip-minio
@@ -29,3 +29,19 @@ spec:
           namespace: {{ app_namespace }}
   tls: {}
 
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: '{{ app_name}}-api'
+  namespace: {{ app_namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ s3_domain_name }}`)
+      kind: Rule
+      services: 
+        - name: {{ app_name }}
+          port: 80
+  tls: {}

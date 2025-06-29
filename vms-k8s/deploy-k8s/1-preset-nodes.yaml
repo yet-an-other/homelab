@@ -72,6 +72,44 @@
       become: true
       command: sysctl --system
 
+    ## Update /etc/hosts with node information
+    ##
+    - name: Get all nodes information
+      set_fact:
+        nodes_info: "{{ groups['k8s-nodes'] | map('extract', hostvars) | list }}"
+
+    - name: Create hosts entries
+      set_fact:
+        hosts_entries: >-
+          {% for node in nodes_info %}
+          {{ node.internal_ip }} {{ node.inventory_hostname }}
+          {% endfor %}
+
+    - name: Display hosts entries to be added
+      debug:
+        var: hosts_entries
+        verbosity: 1
+
+    - name: Add marker lines to /etc/hosts if not present
+      become: true
+      blockinfile:
+        path: /etc/hosts
+        block: |
+          # Kubernetes cluster nodes - managed by Ansible
+          {% for node in nodes_info %}
+          {{ node.internal_ip }} {{ node.inventory_hostname }}
+          {% endfor %}
+        marker: "# {mark} ANSIBLE MANAGED KUBERNETES NODES"
+        state: present
+
+    - name: Add load balancer entry to /etc/hosts
+      become: true
+      lineinfile:
+        path: /etc/hosts
+        regexp: '.*kubernetes.local$'
+        line: "{{ hostvars[groups['control-nodes'][0]].public_ip }} kubernetes.local"
+        state: present
+
     ## containerd setup, versions see in 0-deploy-cluster.yaml
     ##
     - import_tasks: ./libs/1-install-containerd.yaml

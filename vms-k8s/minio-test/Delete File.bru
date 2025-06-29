@@ -1,0 +1,17 @@
+meta {
+  name: Delete File
+  type: http
+  seq: 6
+}
+
+delete {
+  url: https://{{host}}/{{bucket}}/testfile.txt
+  body: none
+  auth: inherit
+}
+
+tests {
+    test("Status code is 204", function() {
+      expect(res.status).to.equal(204);
+    });
+}

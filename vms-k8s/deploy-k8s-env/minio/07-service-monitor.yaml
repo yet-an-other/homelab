@@ -14,13 +14,23 @@ spec:
     matchNames:
       - {{ app_namespace }}                         # Namespace where MinIO services live
   endpoints:
-    - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`)
-      path: /minio/prometheus/metrics
-      interval: 30s
-      scrapeTimeout: 10s
-      scheme: http
     - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`) 
       path: /minio/v2/metrics/cluster
       interval: 30s
       scrapeTimeout: 10s
       scheme: http  
+    - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`) 
+      path: /minio/v2/metrics/node
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http        
+    - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`) 
+      path: /minio/v2/metrics/bucket
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http        
+    - port: metrics                   # Name of the metrics port on MinIO Service (check with `kubectl get svc -n minio`) 
+      path: /minio/v2/metrics/resource
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http       

@@ -10,4 +10,4 @@ if [ ! -d "$1" ]; then
     exit 1
 fi
 
-ansible-playbook -i ansible/secret.inventory.yaml $1/create-$1.yaml
+ansible-playbook -i ansible/inventory.secret.yaml $1/create-$1.yaml

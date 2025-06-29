@@ -1,0 +1,21 @@
+meta {
+  name: Upload File
+  type: http
+  seq: 3
+}
+
+put {
+  url: https://{{host}}/{{bucket}}/testfile.txt
+  body: text
+  auth: inherit
+}
+
+body:text {
+  This is a test file uploaded to MinIO via Bruno.
+}
+
+tests {
+    test("Status code is 200", function() {
+      expect(res.status).to.equal(200);
+    });
+}

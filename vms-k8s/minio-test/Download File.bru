@@ -1,0 +1,21 @@
+meta {
+  name: Download File
+  type: http
+  seq: 5
+}
+
+get {
+  url: https://{{host}}/{{bucket}}/testfile.txt
+  body: none
+  auth: inherit
+}
+
+tests {
+    test("Status code is 200", function() {
+      expect(res.status).to.equal(200);
+    });
+    
+    test("Content is correct", function() {
+      expect(res.body).to.include("test file uploaded to MinIO");
+    });
+}

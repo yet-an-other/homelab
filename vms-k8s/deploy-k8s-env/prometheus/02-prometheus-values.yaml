@@ -19,13 +19,18 @@ prometheus:
     walCompression: true
     logLevel: info
 
+    # Enable remote write receiver
+    enableRemoteWriteReceiver: true
+    
+
+
 
 grafana:
   enabled: true
   defaultDashboardsEnabled: false
 
   adminUser: admin
-  adminPassword: {{ pg_password }}
+  adminPassword: {{ pgi_password }}
 
   sidecar:
     dashboards:
@@ -53,15 +58,23 @@ grafana:
     - name: tempo
       type: tempo
       url: http://{{ tempo_endpoint }}:3100
+      jsonData:
+        httpMethod: GET
+        serviceMap:
+          datasourceUid: 'prometheus'
+        nodeGraph:
+          enabled: true
+        search:
+          hide: false
 
-  envFromSecret: {{ pg_secret_name }}
+  envFromSecret: {{ pgi_secret_name }}
 
   grafana.ini: 
 
     database:
       type: postgres
       # Use environment variables injected above for sensitive data
-      host: "{{ pg_host_rw }}"
+      host: "{{ pgi_host_rw }}"
       name: "grafana"       
       user: "${username}"     
       password: "${password}" 
@@ -70,7 +83,7 @@ grafana:
       # This is the crucial setting for subpath
       # Use your external *host* and the *subpath*.
       # The trailing slash is important!
-      root_url: "https://{{ domain_fqdn }}/grafana/"
+      root_url: "https://{{ main_domain_name }}/grafana/"
       #  Helps Grafana serve assets correctly from the subpath
       serve_from_sub_path: true
 
@@ -89,9 +102,9 @@ grafana:
       name: Zitadel
       client_id: "{{ zitadel_grafana_id }}"
       scopes: "openid email profile offline_access roles"
-      auth_url: https://zitadel.bdgn.me/oauth/v2/authorize
-      token_url: https://zitadel.bdgn.me/oauth/v2/token
-      api_url: https://zitadel.bdgn.me/oidc/v1/userinfo
+      auth_url: https://{{ auth_domain_name }}/oauth/v2/authorize
+      token_url: https://{{ auth_domain_name }}/oauth/v2/token
+      api_url: https://{{ auth_domain_name }}/oidc/v1/userinfo
       use_pkce: true
       use_refresh_token: true
       auto_login: true

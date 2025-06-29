@@ -30,7 +30,7 @@ spec:
   entryPoints:
     - websecure 
   routes:
-    - match: PathPrefix(`/longhorn`)
+    - match: Host(`{{ main_domain_name }}`) && PathPrefix(`/longhorn`)
       kind: Rule
       middlewares:
         {{ zitadel_middleware | indent(8) }}

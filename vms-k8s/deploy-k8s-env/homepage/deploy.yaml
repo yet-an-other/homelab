@@ -1,0 +1,23 @@
+- name: deploy homepage
+  kubernetes.core.k8s:
+    state: present
+    definition: '{{ item }}'
+  loop:
+    - "{{ lookup('template', 'homepage/00-namespace.yaml') }}"
+    - "{{ lookup('template', 'homepage/01-service-account.yaml') }}"
+    - "{{ lookup('template', 'homepage/02-secrets.yaml') }}"
+    - "{{ lookup('template', 'homepage/03-cluster-role.yaml') }}"
+    - "{{ lookup('template', 'homepage/04-cluster-role-binding.yaml') }}"
+    - "{{ lookup('template', 'homepage/05-config-map.yaml') }}"
+    - "{{ lookup('template', 'homepage/06-deployment.yaml') }}"
+    - "{{ lookup('template', 'homepage/07-service.yaml') }}"
+    - "{{ lookup('template', 'homepage/08-ingress.yaml') }}"
+  vars:
+    app_name: homepage
+    app_namespace: homepage
+    labels: |
+      app.kubernetes.io/name: {{ app_name }}
+      app.kubernetes.io/instance: {{ app_namespace }}
+    selectors: |
+      app.kubernetes.io/name: {{ app_name }}
+      app.kubernetes.io/instance: {{ app_namespace }}

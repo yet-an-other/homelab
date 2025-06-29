@@ -2,14 +2,19 @@
   hosts: 'control-nodes[0]'
   gather_facts: false
   become: false
-  vars_files: 
-    - '../envs/secret.vars.yaml'
+
   vars:
     prometheus_label: 'release: prometheus'
     monitoring_namespace: monitoring
     traefik_app_name: 'traefik'
     traefik_namespace: 'traefik'
-
+    rancher_storage_class_name: 'local-path'
+    longhorn_storage_class_name: 'local-longhorn'
+    minio_storage_class_name: '{{ longhorn_storage_class_name }}'
+    pg_storage_class_name: '{{ longhorn_storage_class_name }}'
+    auth_namespace: auth
+    s3_endpoint: minio.minio
+    pgi_secret_name: pgi-secret
 
   tasks:
 
@@ -28,388 +33,89 @@
 
     ## deploy prometheus crds
     ##
-    - name: install prometheus crds
-      block:
-        - name: Check if prometheus CRDs are already installed
-          kubernetes.core.k8s_info:
-            api_version: apiextensions.k8s.io/v1
-            kind: CustomResourceDefinition
-            name: prometheuses.monitoring.coreos.com
-          register: prometheus_crds
-
-        - name: deploy namespace
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'prometheus/00-namespace.yaml') }}"
-
-        - name: deploy prometheus crds
-          delegate_to: localhost
-          kubernetes.core.helm:
-            kubeconfig: '{{ kube_config }}'
-            name: prometheus
-            release_namespace: '{{ app_namespace }}'
-            chart_ref: prometheus-community/kube-prometheus-stack
-            values: "{{ lookup('template', 'prometheus/01-crds-values.yaml') | from_yaml }}"
-          when: prometheus_crds.resources | length == 0
-      vars:
-        app_namespace: '{{ monitoring_namespace }}'
+    - include_tasks: prometheus/deploy-crd.yaml
+      when: only_deploy is not defined or only_deploy == 'prometheus-crd'
 
     ## install cert-manager
     ##
-    - name: deploy cert-manager crds
-      kubernetes.core.k8s:
-        state: present
-        src: https://github.com/cert-manager/cert-manager/releases/download/v1.17.0/cert-manager.yaml
+    - include_tasks: cert-manager/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'cert-manager'
 
-    - name: Wait for cert-manager pods to be ready
-      kubernetes.core.k8s_info:
-        kind: Pod
-        namespace: cert-manager
-        label_selectors:
-          - app.kubernetes.io/instance=cert-manager
-      register: cert_manager_pods
-      until: 
-        - cert_manager_pods.resources is defined
-        - cert_manager_pods.resources | length > 0
-        - cert_manager_pods.resources | map(attribute='status.phase') | list | unique == ['Running']
-        - cert_manager_pods.resources | map(attribute='status.containerStatuses') | flatten | map(attribute='ready') | select('equalto', false) | list | length == 0
-      retries: 15
-      delay: 10    
-
-    - name: deploy cert-manager issuer
-      kubernetes.core.k8s:
-        state: present
-        definition: '{{ item }}' 
-      with_items:
-        - "{{ lookup('template', 'cert-manager/01-cf-secret-token.yaml') }}"
-        - "{{ lookup('template', 'cert-manager/02-cluster-issuer.yaml') }}"
-        - "{{ lookup('template', 'cert-manager/03-certificate.yaml') }}"
         
     ## install traefik
     ##
-    - name: deploy traefik
-      block:
-        - name: deploy traefik CRDs
-          kubernetes.core.k8s:
-            state: present
-            src: '{{ item }}'
-          with_items:
-            - https://raw.githubusercontent.com/traefik/traefik/{{ app_version }}/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
-
-        - name: deploy traefik
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'traefik/00-namespace.yaml') }}"
-            - "{{ lookup('template', 'traefik/01-cluster-role.yaml') }}"
-            - "{{ lookup('template', 'traefik/02-service-account.yaml') }}"
-            - "{{ lookup('template', 'traefik/03-cluster-role-binding.yaml') }}"
-            - "{{ lookup('template', 'traefik/04-tls-store.yaml') }}"
-            - "{{ lookup('template', 'traefik/05-deployment.yaml') }}"
-            - "{{ lookup('template', 'traefik/06-service.yaml') }}"
-            - "{{ lookup('template', 'traefik/07-ingress-dashboard.yaml') }}"
-            - "{{ lookup('template', 'traefik/08-service-monitor.yaml') }}"
-            - "{{ lookup('template', 'traefik/10-whoami.yaml') }}"
+    - include_tasks: traefik/deploy.yaml
       vars:
         app_name: '{{ traefik_app_name }}'
         app_namespace: '{{ traefik_namespace }}'
         app_version: v3.3
-        app_replicas: 3
-        selectors: 'app.kubernetes.io/name: {{ app_name }}'
-        labels: |
-          app.kubernetes.io/version: "{{ app_version }}"
-          app.kubernetes.io/name: {{ app_name }}
-          app.kubernetes.io/instance: {{ app_namespace }}
-        zitadel_middleware: ""
+      when: only_deploy is not defined or only_deploy == 'traefik'
+
 
     ## install longhorn storage provider for distributed storage
     ##
-    - name: deploy longhorn storage provider
-      block:
-        - name: deploy longhorn crd
-          kubernetes.core.k8s:
-            state: present
-            src: https://raw.githubusercontent.com/longhorn/longhorn/{{ app_version }}/deploy/longhorn.yaml
-
-        - name: deploy longhorn storage class
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'longhorn/00-storage-class-local.yaml') }}"
-            - "{{ lookup('template', 'longhorn/01-storage-class-spread.yaml') }}"
-            - "{{ lookup('template', 'longhorn/02-ingress.yaml') }}"        
+    - include_tasks: longhorn/deploy.yaml       
       vars:
         app_version: v1.8.1
-        zitadel_middleware: ""
+      when: only_deploy is not defined or only_deploy == 'longhorn'
+
+    # install rancher storage provider for distributed storage
+    #
+    - include_tasks: rancher/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'rancher'    
 
     ## install postgresql cluster
     ##
-    - name: generate suffix
-      set_fact:
-        suffix: "{{ now(utc=true,fmt='%Y-%m-%d') }}-{{ lookup('community.general.random_string', length=6, special=false) }}" 
-
-    - name: deploy postgresql cluster
-      block:
-        - name: deploy postgresql crds
-          kubernetes.core.k8s:
-            state: present
-            src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.20/releases/cnpg-1.20.6.yaml
-
-        - name: Wait for CNPG controller to be ready
-          kubernetes.core.k8s_info:
-            kind: Pod
-            namespace: cnpg-system
-            label_selectors:
-              - app.kubernetes.io/name=cloudnative-pg
-          register: cnpg_controller_pods
-          until: 
-            - cnpg_controller_pods.resources is defined
-            - cnpg_controller_pods.resources | length > 0
-            - cnpg_controller_pods.resources | map(attribute='status.phase') | list | unique == ['Running']
-            - cnpg_controller_pods.resources | map(attribute='status.containerStatuses') | flatten | map(attribute='ready') | select('equalto', false) | list | length == 0
-          retries: 15
-          delay: 10            
-
-        - name: deploy postgresql database
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'postgres/00-namespace.yaml') }}"      
-            - "{{ lookup('template', 'postgres/01-pg-secret.yaml') }}"
-            - "{{ lookup('template', 'postgres/02-az-secret.yaml') }}"
-            - "{{ lookup('template', 'postgres/03-aws-secret.yaml') }}"
-            - "{{ lookup('template', 'postgres/04-scheduled-backup.yaml') }}"                
-            - "{{ lookup('template', 'postgres/05-pg-cluster.yaml') }}"
-      vars:
-        app_namespace: '{{ pg_namespace }}'
-        pg_storage_size: 20Gi
-        s3_pg_bucket: ib.pg-backup
-        s3_working_path: '{{ pg_name }}-{{ env }}'
-        #s3_backup_path: ''
-        s3_backup_path: '{{ pg_name }}-{{ env }}-backup' # if empty, will be create dbs from scratch
-        pg_secret_name: pg-secret
-        aws_secret_name: aws-secret
-
+    - include_tasks: postgres/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'postgres'
 
     ## deploy zitadel
     ##
-    - name: Deploy zitadel
-      block:
-        - name: Wait for PostgreSQL cluster to be ready
-          kubernetes.core.k8s_info:
-            kind: Cluster
-            api_version: postgresql.cnpg.io/v1
-            namespace: "{{ pg_namespace }}"
-            name: "{{ pg_name }}"
-          register: pg_cluster
-          until:
-            - pg_cluster.resources is defined
-            - pg_cluster.resources | length > 0
-            - pg_cluster.resources[0].status is defined
-            - pg_cluster.resources[0].status.readyInstances is defined
-            - pg_cluster.resources[0].status.readyInstances == pg_cluster.resources[0].spec.instances
-            - pg_cluster.resources[0].status.phase == "Cluster in healthy state"
-          retries: 20
-          delay: 15
+    - include_tasks: zitadel/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'zitadel'
 
-        - name: deploy zitadel ingress
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'zitadel/00-namespace.yaml') }}"
-            - "{{ lookup('template', 'zitadel/02-ingress.yaml') }}"
-
-        - name: deploy zitadel
-          delegate_to: localhost
-          kubernetes.core.helm:
-            kubeconfig: '{{ kube_config }}'
-            name: '{{ app_name }}'
-            chart_ref: zitadel/zitadel
-            release_namespace: '{{ app_namespace }}'
-            values: "{{ lookup('template', 'zitadel/01-values.yaml') | from_yaml }}"
-      vars:
-        app_name: zitadel
-        app_namespace: auth
 
     ## deploy oauth2-proxy
     ##
-    - name: deploy oauth2-proxy
-      kubernetes.core.k8s:
-        state: present
-        definition: '{{ item }}'
-      loop:
-        - "{{ lookup('template', 'oauth2proxy/01-deployment.yaml') }}"
-        - "{{ lookup('template', 'oauth2proxy/02-service.yaml') }}"
-        - "{{ lookup('template', 'oauth2proxy/03-shared-middlewares.yaml') }}"
-        - "{{ lookup('template', 'oauth2proxy/04-ingress.yaml') }}"
-
-        ## at this point we should update protected sites with oauth2-proxy middleware  
-        - "{{ lookup('template', 'traefik/07-ingress-dashboard.yaml') }}"
-        - "{{ lookup('template', 'longhorn/02-ingress.yaml') }}"
-      vars:
-        app_name: oauth2-proxy
-        app_namespace: auth
-        app_port: 4180
-        selectors: 'app.kubernetes.io/name: {{ app_name }}'
-        labels: |
-          app.kubernetes.io/name: {{ app_name }}
-          app.kubernetes.io/instance: {{ app_namespace }}
-        zitadel_middleware: |
-          - name: oauth2-proxy-auth-error
-            namespace: {{ app_namespace }}
-          - name: oauth2-proxy-forward-auth
-            namespace: {{ app_namespace }}
+    - include_tasks: oauth2proxy/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'oauth2proxy'
 
     ## install minio
     ##
-    - name: install minio
-      block:
-        - name: deploy minio operator
-          kubernetes.core.k8s:
-            state: present
-            definition: "{{ lookup('kubernetes.core.kustomize', dir='github.com/minio/operator?ref=' + app_version) }}"
+    - include_tasks: minio/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'minio'
 
-        - name: deploy minio cluster
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'minio/00-namespace.yaml') }}"
-            - "{{ lookup('template', 'minio/01-cluster-role.yaml') }}"
-            - "{{ lookup('template', 'minio/02-storage-configuration.yaml') }}"
-            - "{{ lookup('template', 'minio/03-storage-user.yaml') }}"
-            - "{{ lookup('template', 'minio/04-tenant.yaml') }}"
-            - "{{ lookup('template', 'minio/05-ingress.yaml') }}"
-            - "{{ lookup('template', 'minio/06-service.yaml') }}"
-            - "{{ lookup('template', 'minio/07-service-monitor.yaml') }}"
-      vars:
-        app_name: minio
-        app_namespace: minio
-        app_version: v7.1.0
-        minio_storage_size: 5Gi
-        labels: |
-          app.kubernetes.io/version: {{ app_version }}
-          app.kubernetes.io/name: {{ app_name}}
-          app.kubernetes.io/instance: {{ app_namespace }}
-          v1.min.io/tenant: {{ app_name }} 
-        selectors: |
-          v1.min.io/tenant: {{ app_name }}
-
-
-    ## install prometheus stack
+    ## install monitoring stack
     ##
-    - name: deploy prometheus stack
+    - name: deploy monitoring stack
       block:
-        - name: deploy loki
-          delegate_to: localhost
-          kubernetes.core.helm:
-            kubeconfig: '{{ kube_config }}'
-            name: loki
-            chart_ref: grafana/loki
-            release_namespace: '{{ app_namespace }}'
-            values: "{{ lookup('template', 'loki/01-values.yaml') | from_yaml }}"
+        - include_tasks: loki/deploy.yaml
 
-        - name: deploy tempo via helm
-          delegate_to: localhost
-          kubernetes.core.helm:
-            kubeconfig: '{{ kube_config }}'
-            name: tempo
-            chart_ref: grafana/tempo
-            release_namespace: '{{ app_namespace }}'
-            values: "{{ lookup('template', 'tempo/01-values.yaml') | from_yaml }}"
+        - include_tasks: tempo/deploy.yaml
 
-        - name: deploy objects
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'postgres/01-pg-secret.yaml') }}"
-            - "{{ lookup('template', 'prometheus/03-ingress.yaml') }}"
-            - "{{ lookup('template', 'prometheus/04-metrics-server.yaml') }}"
+        - include_tasks: prometheus/deploy.yaml
 
-        - name: deploy alloy
-          delegate_to: localhost
-          kubernetes.core.helm:
-            kubeconfig: '{{ kube_config }}'
-            name: alloy
-            chart_ref: grafana/alloy
-            release_namespace: '{{ app_namespace }}'
-            values: "{{ lookup('template', 'alloy/01-values.yaml') | from_yaml }}"
-
-        - name: deploy prometheus & grafana
-          delegate_to: localhost
-          kubernetes.core.helm:
-            kubeconfig: '{{ kube_config }}'
-            name: prometheus
-            chart_ref: prometheus-community/kube-prometheus-stack
-            release_namespace: '{{ app_namespace }}'
-            values: "{{ lookup('template', 'prometheus/02-prometheus-values.yaml') | from_yaml }}"
+        - include_tasks: alloy/deploy.yaml        
       vars:
-        app_name: prometheus
         app_namespace: '{{ monitoring_namespace }}'
-        pg_secret_name: pg-secret
         loki_endpoint: 'loki-gateway.{{ monitoring_namespace }}'
         tempo_endpoint: 'tempo.{{ monitoring_namespace }}'
         prometheus_endpoint: 'prometheus-kube-prometheus-prometheus.{{ monitoring_namespace }}'
-        alertmanager_endpoint: 'alertmanager-operated.{{ monitoring_namespace }}'        
-
+        alertmanager_endpoint: 'alertmanager-operated.{{ monitoring_namespace }}'
+      when: only_deploy is not defined or only_deploy == 'monitoring'        
 
     ## install kafka cluster
     ##
-    - name: deploy kafka
-      block:
-        - name: deploy kafka cluster
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'kafka/00-namespace.yaml') }}"
+    - include_tasks: kafka/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'kafka'
 
-        - name: deploy kafka crds
-          kubernetes.core.k8s:
-            state: present
-            src: https://strimzi.io/install/latest?namespace={{ app_namespace }}
-
-        - name: deploy kafka cluster
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ item }}'
-          loop:
-            - "{{ lookup('template', 'kafka/01-node-pool.yaml') }}"
-            - "{{ lookup('template', 'kafka/02-kafka-cluster.yaml') }}"
-      vars:
-        app_name: kafka
-        app_namespace: kafka
-        app_version: 3.9.0
+    ## deploy argocd
+    ##
+    - include_tasks: argocd/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'argocd'      
 
     ## deploy homepage
     ##
-    - name: deploy homepage
-      kubernetes.core.k8s:
-        state: present
-        definition: '{{ item }}'
-      loop:
-        - "{{ lookup('template', 'homepage/00-namespace.yaml') }}"
-        - "{{ lookup('template', 'homepage/01-service-account.yaml') }}"
-        - "{{ lookup('template', 'homepage/02-secrets.yaml') }}"
-        - "{{ lookup('template', 'homepage/03-cluster-role.yaml') }}"
-        - "{{ lookup('template', 'homepage/04-cluster-role-binding.yaml') }}"
-        - "{{ lookup('template', 'homepage/05-config-map.yaml') }}"
-        - "{{ lookup('template', 'homepage/06-deployment.yaml') }}"
-        - "{{ lookup('template', 'homepage/07-service.yaml') }}"
-        - "{{ lookup('template', 'homepage/08-ingress.yaml') }}"
-      vars:
-        app_name: homepage
-        app_namespace: homepage
-        labels: |
-          app.kubernetes.io/name: {{ app_name }}
-          app.kubernetes.io/instance: {{ app_namespace }}
-        selectors: |
-          app.kubernetes.io/name: {{ app_name }}
-          app.kubernetes.io/instance: {{ app_namespace }}
+    - include_tasks: homepage/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'homepage'
+

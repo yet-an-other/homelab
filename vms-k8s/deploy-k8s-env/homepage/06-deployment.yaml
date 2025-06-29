@@ -28,7 +28,7 @@ spec:
           imagePullPolicy: Always
           env:
             - name: HOMEPAGE_ALLOWED_HOSTS
-              value: {{ domain_fqdn }}, {{ auth_domain_name }} 
+              value: {{ main_domain_name }}, {{ auth_domain_name }} 
           ports:
             - name: http
               containerPort: 3000

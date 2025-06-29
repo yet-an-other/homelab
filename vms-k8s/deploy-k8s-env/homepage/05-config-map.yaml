@@ -29,37 +29,46 @@ data:
   services.yaml: |
     - Services:
         - Traefik:
-            href: https://{{ domain_fqdn }}/traefik
+            href: https://{{ main_domain_name }}/traefik
             description: Traefik
             icon: traefik
             widget:
               type: iframe
-              src: https://{{ domain_fqdn }}/grafana/d-solo/delzqomdvbhfke/homepage-widgets?orgId=1&timezone=browser&kiosk=true&panelId=1&__feature.dashboardSceneSolo
+              src: https://{{ main_domain_name }}/grafana/d-solo/delzqomdvbhfke/homepage-widgets?orgId=1&timezone=browser&kiosk=true&panelId=1&__feature.dashboardSceneSolo
               classes: h-30 sm:h-30 md:h-30 lg:h-30 xl:h-30 2xl:h-36 
 
         - Grafana:
-            href: https://{{ domain_fqdn }}/grafana/
+            href: https://{{ main_domain_name }}/grafana/
             description: Grafana
             icon: grafana
             widget:
               type: grafana
               url: http://prometheus-grafana.monitoring.svc.cluster.local:80/grafana
               username: admin
-              password: {{ pg_password }}
+              password: {{ pgi_password }}
 
         - Longhorn:
-            href: https://{{ domain_fqdn }}/longhorn
+            href: https://{{ main_domain_name }}/longhorn
             description: Longhorn
             icon: longhorn
 
         - Minio:
-            href: https://{{ domain_fqdn }}/minio/
+            href: https://{{ main_domain_name }}/minio/
             description: Minio
             icon: minio
             widget:
               type: iframe
-              src: https://{{ domain_fqdn }}/grafana/public-dashboards/47e2c18f93e04761aff6465cfc61094c
+              src: https://{{ main_domain_name }}/grafana/d-solo/delzqomdvbhfke/homepage-widgets?orgId=1&timezone=browser&kiosk=true&panelId=2&__feature.dashboardSceneSolo
               classes: h-30 sm:h-30 md:h-30 lg:h-30 xl:h-30 2xl:h-36
+
+        - ArgoCD:
+            href: https://{{ main_domain_name }}/argocd
+            description: ArgoCD
+            icon: argo-cd
+            widget:
+              type: argocd
+              url: http://argocd-server.argocd.svc.cluster.local/argocd
+              key: <plkaceholder-for-argo-cd-key generate it in the argocd app>
 
   widgets.yaml: |
     - kubernetes:
@@ -80,7 +89,7 @@ data:
         total: true
         labels: true
         nodes: true
-        href: https://{{ domain_fqdn }}/longhorn
+        href: https://{{ main_domain_name }}/longhorn
         include:
           - worker-10
           - worker-20

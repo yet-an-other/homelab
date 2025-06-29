@@ -1,0 +1,17 @@
+- name: deploy argocd
+  block:
+    - name: deploy argocd 
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'argocd/00-namespace.yaml') }}"
+        - "{{ lookup('kubernetes.core.kustomize', dir='./deploy-k8s-env/argocd') }}"
+        - "{{ lookup('template', 'argocd/01-argocd-cm.yaml') }}"
+        - "{{ lookup('template', 'argocd/02-argocd-rbac-cm.yaml') }}"
+        - "{{ lookup('template', 'argocd/04-ingress.yaml') }}"
+        - "{{ lookup('template', 'argocd/05-dashboards.yaml') }}"
+
+  vars:
+    app_namespace: argocd
+    app_name: argocd

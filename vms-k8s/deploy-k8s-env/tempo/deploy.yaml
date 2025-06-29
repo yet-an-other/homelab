@@ -1,0 +1,8 @@
+- name: deploy tempo via helm
+  delegate_to: localhost
+  kubernetes.core.helm:
+    kubeconfig: '{{ kube_config }}'
+    name: tempo
+    chart_ref: grafana/tempo
+    release_namespace: '{{ app_namespace }}'
+    values: "{{ lookup('template', 'tempo/01-values.yaml') | from_yaml }}"

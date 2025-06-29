@@ -1,0 +1,25 @@
+- name: Wait for MinIO tenant to be ready before deploying Loki
+  kubernetes.core.k8s_info:
+    kind: Tenant
+    api_version: minio.min.io/v2
+    namespace: minio
+    name: minio
+  register: minio_tenant
+  until:
+    - minio_tenant.resources is defined
+    - minio_tenant.resources | length > 0
+    - minio_tenant.resources[0].status is defined
+    - minio_tenant.resources[0].status.currentState is defined
+    - minio_tenant.resources[0].status.currentState == "Initialized"
+  retries: 30
+  delay: 10
+
+- name: deploy loki
+  delegate_to: localhost
+  kubernetes.core.helm:
+    kubeconfig: '{{ kube_config }}'
+    name: loki
+    chart_ref: grafana/loki
+    chart_version: 6.27.0
+    release_namespace: '{{ app_namespace }}'
+    values: "{{ lookup('template', 'loki/01-values.yaml') | from_yaml }}"

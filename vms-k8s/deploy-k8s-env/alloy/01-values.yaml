@@ -1,10 +1,18 @@
 alloy:
-  securityContext:
-    sysctls:
-      - name: fs.inotify.max_user_watches
-        value: "2099999999"
+  extraPorts:
+    - name: otlp
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+
   configMap:
     content: |-
+    
       // Write your Alloy config here:
       logging {
         level = "info"
@@ -31,39 +39,62 @@ alloy:
         // Label creation - "namespace" field from "__meta_kubernetes_namespace"
         rule {
           source_labels = ["__meta_kubernetes_namespace"]
-          action = "replace"
-          target_label = "namespace"
+          action        = "replace"
+          target_label  = "namespace"
         }
 
         // Label creation - "pod" field from "__meta_kubernetes_pod_name"
         rule {
           source_labels = ["__meta_kubernetes_pod_name"]
-          action = "replace"
-          target_label = "pod"
+          action        = "replace"
+          target_label  = "pod"
         }
 
         // Label creation - "container" field from "__meta_kubernetes_pod_container_name"
         rule {
           source_labels = ["__meta_kubernetes_pod_container_name"]
-          action = "replace"
-          target_label = "container"
+          action        = "replace"
+          target_label  = "container"
         }
 
         // Label creation -  "app" field from "__meta_kubernetes_pod_label_app_kubernetes_io_name"
         rule {
-          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
-          action = "replace"
-          target_label = "app"
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app"]
+          regex         = "^;*([^;]+)(;.*)?$"
+          target_label  = "app"
         }
+
+        rule {
+            source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component", "__meta_kubernetes_pod_label_component"]
+            regex         = "^;*([^;]+)(;.*)?$"
+            target_label  = "component"
+        }
+
+        rule {
+            source_labels = ["__meta_kubernetes_pod_node_name"]
+            target_label  = "node_name"
+        }        
 
         // Label creation -  "job" field from "__meta_kubernetes_namespace" and "__meta_kubernetes_pod_container_name"
         // Concatenate values __meta_kubernetes_namespace/__meta_kubernetes_pod_container_name
+        // rule {
+        //   source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+        //   action = "replace"
+        //   target_label = "job"
+        //   separator = "/"
+        //   replacement = "$1"
+        // }
+
         rule {
-          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
-          action = "replace"
-          target_label = "job"
-          separator = "/"
-          replacement = "$1"
+            source_labels = ["namespace", "app"]
+            separator     = "/"
+            target_label  = "job"
+        }
+
+        rule {
+            source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_instance", "__meta_kubernetes_pod_label_instance"]
+            regex         = "^;*([^;]+)(;.*)?$"
+            target_label  = "instance"
         }
 
         // Label creation - "container" field from "__meta_kubernetes_pod_uid" and "__meta_kubernetes_pod_container_name"
@@ -97,9 +128,30 @@ alloy:
       loki.process "pod_logs" {
         stage.static_labels {
             values = {
-              cluster = "vienna",
+              cluster = "{{ env }}",
             }
         }
+
+        stage.decolorize { }
+
+        stage.drop {
+            expression = ".*(\\/health|\\/metrics|\\/ping).*"
+        }
+
+        stage.json {
+          expressions = {
+            extracted_level = "LogLevel",
+            message = "Message",
+          }
+        }
+
+        // Convert extracted level to standard format and create level label
+        stage.labels {
+          values = {
+            level = "extracted_level",
+          }
+        }
+
 
         forward_to = [loki.write.default.receiver]
       }
@@ -122,15 +174,20 @@ alloy:
 
         stage.static_labels {
           values = {
-            cluster = "vienna",
+            cluster = "{{ env }}",
           }
         }
 
         stage.labels {
           values = {
             kubernetes_cluster_events = "job",
+            name                      = "name",
+            kind                      = "kind",
+            apiVersion                = "apiVersion",
+            type                      = "type",
           }
         }
+
       }
 
 
@@ -144,17 +201,25 @@ alloy:
           endpoint = "0.0.0.0:4317"
         }
 
-        // Output straight to the OTLP gRPC exporter. We would usually do some processing
-        // first, most likely batch processing, but for this example we pass it straight
-        // through.
+        http {
+          endpoint = "0.0.0.0:4318"
+          cors {
+            allowed_origins = ["*"]
+          }
+        }        
+
+        // Output traces to Tempo and metrics to Prometheus
         output {
           traces = [
             otelcol.exporter.otlp.tempo.input,
           ]
+          metrics = [
+            otelcol.exporter.prometheus.metrics_service.input,
+          ]
         }
       }
 
-      // Define an OTLP gRPC exporter to send all received traces to GET.
+      // Define an OTLP gRPC exporter to send all received traces to Tempo.
       // The unique label 'tempo' is added to uniquely identify this exporter.
       otelcol.exporter.otlp "tempo" {
           // Define the client for exporting.
@@ -168,5 +233,17 @@ alloy:
                   // Do not verify TLS certificates when connecting.
                   insecure_skip_verify = true
               }
+          }
+      }
+
+
+      // Define a Prometheus exporter to convert OTLP metrics to Prometheus format
+      otelcol.exporter.prometheus "metrics_service" {
+        forward_to = [prometheus.remote_write.metrics_service.receiver]
+      }
+
+      prometheus.remote_write "metrics_service" {
+          endpoint {
+              url = "http://{{ prometheus_endpoint }}:9090/api/v1/write"
           }
       }

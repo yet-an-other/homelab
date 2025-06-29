@@ -1,0 +1,17 @@
+meta {
+  name: Delete Bucket
+  type: http
+  seq: 7
+}
+
+delete {
+  url: https://{{host}}/{{bucket}}/
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("Status code is 204", function() {
+      expect(res.status).to.equal(204);
+    });
+}
