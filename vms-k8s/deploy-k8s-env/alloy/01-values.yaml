@@ -152,9 +152,9 @@ alloy:
           }
         }
 
-
         forward_to = [loki.write.default.receiver]
       }
+
 
 
       // loki.source.kubernetes_events tails events from the Kubernetes API and converts them
@@ -216,6 +216,9 @@ alloy:
           metrics = [
             otelcol.exporter.prometheus.metrics_service.input,
           ]
+          logs = [
+            otelcol.exporter.loki.log_service.input,
+          ]
         }
       }
 
@@ -240,6 +243,10 @@ alloy:
       // Define a Prometheus exporter to convert OTLP metrics to Prometheus format
       otelcol.exporter.prometheus "metrics_service" {
         forward_to = [prometheus.remote_write.metrics_service.receiver]
+      }
+
+      otelcol.exporter.loki "log_service" {
+        forward_to = [loki.write.default.receiver]
       }
 
       prometheus.remote_write "metrics_service" {
