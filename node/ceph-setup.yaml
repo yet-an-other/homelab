@@ -1,0 +1,260 @@
+#### Draft, Not working yet! ####
+
+- name: install ceph
+  hosts: all
+  become: yes
+
+  gather_facts: true
+
+  vars:
+    ceph_network: "172.16.0.0/24"
+    mon_hosts: "172.16.0.11,172.16.0.12,172.16.0.13"
+    first_node: "prox-n1"
+    ceph_data_device: "/dev/sdb"
+    ceph_db_device: "/dev/sda4"
+    ceph_db_size: "60G"
+
+    # тюнинг ceph
+    osd_memory_target_bytes: 3221225472   # ~3 GiB
+    nearfull_ratio: 0.85
+    backfill_full_ratio: 0.90
+    full_ratio: 0.95
+
+    # CephFS/пулы
+    cephfs_name: "cephfs"
+    metadata_pool: "cephfs_metadata"
+    data_pool: "cephfs_data_ec"
+    ec_profile_name: "ec21"
+    ec_k: 2
+    ec_m: 1
+
+    # PG — стартовые значения для кластера из 3 OSD
+    pgnum_meta: 32
+    pgnum_data: 128
+
+    # куда монтировать CephFS на Proxmox
+    cephfs_mount_path: "/mnt/pve/cephfs"
+
+  tasks:
+    - name: install ceph
+      command: pveceph install
+      args:
+        creates: "/usr/bin/ceph"
+      register: ceph_install
+      changed_when: ceph_install.rc == 0
+
+    - name: setup ceph
+      command: pveceph init --network {{ ceph_network }} --cluster-network {{ ceph_network }}
+      when: inventory_hostname == first_node
+      args:
+        creates: "/etc/ceph/ceph.conf"
+
+    # MON
+    - name: Ensure MON exists on each node (idempotent)
+      command: "pveceph mon create"
+      args:
+        creates: "/var/lib/ceph/mon/ceph-{{ inventory_hostname }}"
+      register: mon_out
+      changed_when: mon_out.rc == 0
+      failed_when: mon_out.rc not in [0]
+
+    # MGR
+    - name: Ensure MGR exists on each node (idempotent)
+      command: "pveceph mgr create"
+      args:
+        creates: "/var/lib/ceph/mgr/ceph-{{ inventory_hostname }}"
+      register: mgr_out
+      changed_when: mgr_out.rc == 0
+      failed_when: mgr_out.rc not in [0]
+
+    - name: Wait for quorum
+      command: "ceph -s"
+      register: cephs
+      retries: 20
+      delay: 3
+      until: cephs.rc == 0 and ('HEALTH_' in cephs.stdout)
+
+    # === Create & activate OSD (idempotent) ===
+    - name: Check existing OSDs on this host (via ceph-volume)
+      command: ceph-volume lvm list --format=json
+      register: cv_list
+      changed_when: false
+      failed_when: cv_list.rc not in [0]
+
+    # Определяем, есть ли уже OSD, использующий именно наш data-диск (например, /dev/sdb)
+    # Если длина списка == 0, OSD ещё нет и его надо создать
+    - name: Decide if this host needs OSD creation for {{ ceph_data_device }}
+      set_fact:
+        need_create_osd: >-
+          {{
+            (
+              (cv_list.stdout | default('{}')) | from_json | dict2items
+              | selectattr('value','search', ceph_data_device)
+              | list | length == 0
+            )
+          }}
+
+    # (Опционально) мягкая проверка, что DB-раздел доступен и без ФС — не фейлим, просто предупреждаем
+    - name: Soft-check DB partition looks raw (no filesystem)
+      command: "blkid -o value -s TYPE {{ ceph_db_device }}"
+      register: db_fstype
+      changed_when: false
+      failed_when: false
+      when: need_create_osd
+
+    - name: Warn if DB partition has a filesystem (should be raw)
+      debug:
+        msg: "WARNING: {{ ceph_db_device }} имеет файловую систему '{{ db_fstype.stdout }}'. Рекомендуется очистить (wipefs -a) перед созданием OSD."
+      when: need_create_osd and (db_fstype.stdout | length > 0)
+
+    # Создаём OSD через ceph-volume (устойчиво к размеру DB-раздела; возьмет весь sda4)
+    - name: Create OSD with external block.db (ceph-volume)
+      command: >
+        ceph-volume lvm create
+        --data {{ ceph_data_device }}
+        --block.db {{ ceph_db_device }}
+      register: osd_create
+      when: need_create_osd
+      # ceph-volume подробно пишет в stdout/stderr; считаем change при rc==0
+      changed_when: osd_create.rc == 0
+      failed_when: osd_create.rc not in [0]
+
+    # На случай, если OSD остался в состоянии prepared — активируем всё на узле
+    - name: Activate any prepared OSDs on this host (idempotent)
+      command: ceph-volume lvm activate --all
+      register: act_all
+      changed_when: "'Activating' in ((act_all.stdout | default('')) + (act_all.stderr | default('')))"
+      failed_when: act_all.rc not in [0]
+
+    # Стартуем ceph-osd.target (если не поднят) — безопасно и идемпотентно
+    - name: Ensure ceph-osd.target is enabled and started
+      systemd:
+        name: ceph-osd.target
+        enabled: true
+        state: started
+
+    # Ждем, пока хотя бы один OSD этого узла станет виден в дереве
+    # (для простоты — ждём появления любого osd на хосте; можно уточнить grep'ом по hostname)
+    - name: Wait until OSD(s) appear in ceph osd tree
+      shell: "ceph osd tree | grep -q 'osd\\.[0-9]\\+'"
+      register: wait_osd
+      retries: 20
+      delay: 3
+      until: wait_osd.rc == 0
+      changed_when: false
+
+
+
+    - name: Set global OSD memory target
+      command: "ceph config set osd osd_memory_target {{ osd_memory_target_bytes }}"
+      when: inventory_hostname == first_node
+
+    - name: Create EC profile (k={{ ec_k }} m={{ ec_m }})
+      command: "ceph osd erasure-code-profile set {{ ec_profile_name }} k={{ ec_k }} m={{ ec_m }} crush-device-class ssd"
+      when: inventory_hostname == first_node
+      register: ecprof
+      changed_when: ecprof.rc == 0
+
+    - name: Create replicated metadata pool
+      command: "ceph osd pool create {{ metadata_pool }} {{ pgnum_meta }} {{ pgnum_meta }} replicated"
+      when: inventory_hostname == first_node
+      register: mkmeta
+      changed_when: mkmeta.rc == 0
+
+    - name: Set metadata pool size=3
+      command: "ceph osd pool set {{ metadata_pool }} size 3"
+      when: inventory_hostname == first_node
+
+    - name: Create replicated data pool for default CephFS data
+      command: "ceph osd pool create cephfs_data 64 64 replicated"
+      when: inventory_hostname == first_node
+
+    - name: Set replicated data pool size=3
+      command: "ceph osd pool set cephfs_data size 3"
+      when: inventory_hostname == first_node
+
+    - name: Allow overwrites on EC pool for CephFS
+      command: "ceph osd pool set {{ data_pool }} allow_ec_overwrites true"
+      when: inventory_hostname == first_node
+
+    - name: Create CephFS (use replicated pool as default data)
+      command: "ceph fs new {{ cephfs_name }} {{ metadata_pool }} cephfs_data"
+      when: inventory_hostname == first_node
+
+
+    # - name: Add EC pool as additional data pool (idempotent)
+    #   command: "ceph fs add_data_pool {{ cephfs_name }} {{ data_pool }}"
+    #   when: inventory_hostname == first_node and not ec_pool_attached
+    #   register: add_ec
+    #   changed_when: add_ec.rc == 0
+    #   failed_when: add_ec.rc not in [0]
+
+    - name: Ensure MDS exists on selected hosts (idempotent via creates)
+      command: "pveceph mds create"
+      args:
+        creates: "/var/lib/ceph/mds/ceph-{{ inventory_hostname }}"
+
+    - name: Ensure ceph-mds service is enabled and started
+      systemd:
+        name: "ceph-mds@{{ inventory_hostname }}"
+        enabled: true
+        state: started
+
+    # === Set OSD fullness ratios (idempotent) ===
+    - name: Read current OSD fullness ratios
+      command: ceph osd dump -f json
+      register: osd_dump
+      changed_when: false
+      when: inventory_hostname == first_node
+
+    - name: Extract current ratios
+      set_fact:
+        current_nearfull: "{{ (osd_dump.stdout | from_json).nearfull_ratio | default(omit) }}"
+        current_backfillfull: "{{ (osd_dump.stdout | from_json).backfillfull_ratio | default(omit) }}"
+        current_full: "{{ (osd_dump.stdout | from_json).full_ratio | default(omit) }}"
+      when: inventory_hostname == first_node
+
+    - name: Set nearfull ratio
+      command: "ceph osd set-nearfull-ratio {{ nearfull_ratio }}"
+      when: inventory_hostname == first_node and
+            (current_nearfull is not defined or (current_nearfull | float) != (nearfull_ratio | float))
+      register: set_near
+      changed_when: set_near.rc == 0
+
+    - name: Set backfillfull ratio
+      command: "ceph osd set-backfillfull-ratio {{ backfill_full_ratio }}"
+      when: inventory_hostname == first_node and
+            (current_backfillfull is not defined or (current_backfillfull | float) != (backfill_full_ratio | float))
+      register: set_backfill
+      changed_when: set_backfill.rc == 0
+
+    - name: Set full ratio
+      command: "ceph osd set-full-ratio {{ full_ratio }}"
+      when: inventory_hostname == first_node and
+            (current_full is not defined or (current_full | float) != (full_ratio | float))
+      register: set_full
+      changed_when: set_full.rc == 0
+
+    - name: Add CephFS as Proxmox storage (on first node)
+      command: >
+        pvesm add cephfs {{ cephfs_name }}
+        --monhost {{ mon_hosts }}
+        --path {{ cephfs_mount_path }}
+        --content images,iso,vztmpl,backup
+        --username admin
+      when: inventory_hostname == first_node
+      register: addstore
+      changed_when: addstore.rc == 0
+
+    - name: Show ceph status (debug)
+      command: "ceph -s"
+      register: final_cephs
+      changed_when: false
+
+  post_tasks:
+    - name: Print Ceph status
+      debug:
+        msg: "{{ final_cephs.stdout | default('') }}"
+      when: inventory_hostname == first_node
+
+

@@ -1,0 +1,173 @@
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'immich'
+    container_vlan_id   : 20
+    container_ip        : ''
+    container_vmid      : 20307
+    container_disk_size : 20
+    container_memory    : 4096
+    container_cores     : 2
+    container_user      : 'root'
+    container_mount     : ''
+    container_nesting   : 1
+    container_mount     : 'immich'
+  tasks:
+
+    # create moount directory
+    - name: create mount directory
+      delegate_to: "{{ proxmox_node }}"
+      become: true
+      file:
+        path: "/mnt/pve/cephfs/media/{{ container_mount }}"
+        state: directory
+        mode: 0777
+
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+    # copy configs
+    #
+    - name: create config directory
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: 0755
+      with_items:
+        - ~/immich
+
+  
+    - name: copy configs
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      copy:
+        dest: "{{ item.dest }}"
+        force: true
+        content: '{{ lookup("template", "{{ item.src }}") }}'
+      with_items:
+        - { src: '.env', dest: '~/immich/.env' }
+        - { src: 'docker-compose.yaml', dest: '~/immich/docker-compose.yaml' }
+
+    ## immich setup
+    ##
+    - name: setup immich
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+        - name: update system
+          become: yes
+          apt:
+            update_cache: yes
+            upgrade     : dist
+            autoremove  : yes
+            autoclean   : yes
+
+        - name: install packages
+          become: yes
+          apt:
+            name        : "{{ item }}"
+            state       : present
+          with_items:
+            - curl
+            - ca-certificates
+            - gnupg2 
+            - lsb-release 
+            - debian-archive-keyring
+
+        - name: register docker repository
+          become: yes
+          shell: |
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          args:
+            creates: /etc/apt/sources.list.d/docker.list
+
+        - name: update repository cache
+          become: yes
+          apt:
+            update_cache: yes
+
+        - name: install docker
+          become: yes
+          apt:
+            name        : "{{ item }}"
+            state       : present
+          with_items:
+            - docker-ce
+            - docker-ce-cli
+            - containerd.io
+            - docker-compose-plugin
+
+        - name: start docker
+          become: yes
+          service:
+            name        : docker
+            state       : started
+            enabled     : yes
+        
+        - name: run immich
+          become: yes
+          shell: |
+            cd ~/immich
+            docker compose up -d
+            
+    ## Nginx
+    ##
+    - name: install nginx
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      block:
+        - name: register nginx repository
+          become: yes
+          shell: |
+            curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
+                | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
+            echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+            http://nginx.org/packages/ubuntu `lsb_release -cs` nginx" \
+                | sudo tee /etc/apt/sources.list.d/nginx.list
+            echo "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" \
+                | sudo tee /etc/apt/preferences.d/99nginx
+
+        - name: update repository cache
+          become: yes
+          apt:
+            update_cache: yes
+
+        - name: install nginx
+          become: yes
+          apt:
+            update_cache: yes
+            name        : nginx
+            state       : present
+
+        - name: create nginx config
+          delegate_to: "{{ container_hostname }}"
+          copy:
+            dest: /etc/nginx/conf.d/{{ container_hostname }}.conf
+            content: "{{ lookup('template', 'nginx-immich.conf') }}"
+
+
+    # add certificates and restart nginx
+    #
+    # - import_tasks: ../ansible/add-ssl-certificate.yaml
+    #   vars:
+    #     sites: '-d {{ container_hostname }}.{{ domain_name }}'
+    #     reloadcmd: 'sudo systemctl restart nginx'
+
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_hostname }}'

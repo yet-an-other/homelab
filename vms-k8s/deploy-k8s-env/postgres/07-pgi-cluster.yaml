@@ -16,32 +16,23 @@ spec:
       # Storage is local so we can optimize for local disk performance
       random_page_cost: "1.3"
 
-  backup:
-    barmanObjectStore:
-      destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_pg_working_path }}"
-      s3Credentials:
-        accessKeyId:
-          name: {{ aws_secret_name }}
-          key: aws_key_id
-        secretAccessKey:
-          name: {{ aws_secret_name }}
-          key: aws_secret_key
-      wal:
-        compression: bzip2
-        maxParallel: 2
-    retentionPolicy: "7d"
+  # Use barman-cloud plugin for backups
+  #
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: false
+      parameters:
+        barmanObjectName: aws-inf-store
 
+{% if s3_pgi_backup | length > 0 %}
   externalClusters:
     - name: {{ pgi_name }}
-      barmanObjectStore:
-        destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_pgi_backup }}"
-        s3Credentials:
-          accessKeyId:
-            name: {{ aws_secret_name }}
-            key: aws_key_id
-          secretAccessKey:
-            name: {{ aws_secret_name }}
-            key: aws_secret_key
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: aws-inf-store
+          serverName: {{ pgi_name }}
+{% endif %}
 {% if s3_pgi_backup | length > 0 %}
   bootstrap:
     recovery:

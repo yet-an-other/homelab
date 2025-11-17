@@ -5,9 +5,18 @@
 - name: deploy postgresql cluster
   block:
     - name: deploy postgresql crds
+      # kubernetes.core.k8s:
+      #   state: present
+      #   src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
+      ansible.builtin.shell:
+        cmd: kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
+      register: cnpg_crd_result
+      changed_when: "'created' in cnpg_crd_result.stdout or 'configured' in cnpg_crd_result.stdout"
+
+    - name: Deploy barman plugin
       kubernetes.core.k8s:
         state: present
-        src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.20/releases/cnpg-1.20.6.yaml
+        src: https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.8.0/manifest.yaml   
 
     - name: Wait for CNPG controller to be ready
       kubernetes.core.k8s_info:
@@ -32,8 +41,12 @@
         - "{{ lookup('template', 'postgres/00-namespace.yaml') }}"      
         - "{{ lookup('template', 'postgres/01-pgi-secret.yaml') }}"
         - "{{ lookup('template', 'postgres/04-aws-secret.yaml') }}"
-        - "{{ lookup('template', 'postgres/05-scheduled-backup.yaml') }}"                
-        - "{{ lookup('template', 'postgres/06-pgi-cluster.yaml') }}"
+        - "{{ lookup('template', 'postgres/05-scheduled-backup.yaml') }}"
+        - "{{ lookup('template', 'postgres/06-barman-object-store.yaml') }}"
+        - "{{ lookup('template', 'postgres/07-pgi-cluster.yaml') }}"
+
+
+
   vars:
     app_namespace: '{{ pg_namespace }}'
     pgi_storage_size: 2Gi

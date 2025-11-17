@@ -12,14 +12,14 @@
     proxmox_password    : "{{ ansible_password }}"
     container_ssh_file  : "{{ ssh_pub_key_file }}"
     template_vm         : 'ubuntu2404-tmpl'
-    container_hostname  : 'nginx-dmz'
+    container_hostname  : 'nginx-gw'
     container_vlan_id   : 20
-    container_ip        : '192.168.20.202'
-    container_vmid      : 20202
-    container_disk_size : '5G'
+    container_ip        : '192.168.20.210'
+    container_vmid      : 20210
+    container_disk_size : '6G'
     container_memory    : 1024
 
-    container_mac       : 'BC:24:11:E8:60:06'
+    container_mac       : 'BC:24:11:E8:60:10'
 
     local_proxy         : '192.168.40.204' # nginx-vip
     fallback_host       : 'speedtest'
@@ -28,7 +28,7 @@
 
   tasks:
     - name: create container
-      community.general.proxmox_kvm:
+      community.proxmox.proxmox_kvm:
         node            : '{{ proxmox_node }}'
         api_host        : '{{ proxmox_node }}'
         api_user        : 'root@pam'
@@ -49,7 +49,7 @@
         seconds: 6
 
     - name: start vm
-      proxmox_kvm:
+      community.proxmox.proxmox_kvm:
         api_host        : '{{ proxmox_node }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
@@ -59,7 +59,7 @@
       delegate_to       : localhost
 
     - name: get vm info
-      community.general.proxmox_vm_info:
+      community.proxmox.proxmox_vm_info:
         api_host        : '{{ proxmox_node }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
@@ -79,7 +79,7 @@
         qm disk resize {{ container_vmid }} scsi0 {{ container_disk_size }}
         qm guest exec {{ container_vmid }} -- sh -c "printf 'yes\n100%%' | parted /dev/sda resizepart 2 ---pretend-input-tty"
         qm guest exec {{ container_vmid }} -- resize2fs /dev/sda2
-      when: vm_info.proxmox_vms[0].config.scsi0 is search('size=5G')
+      when: vm_info.proxmox_vms[0].config.scsi0 is defined and vm_info.proxmox_vms[0].config.scsi0 is search('size=5G')
 
     - name: configure vm network
       shell: |
@@ -87,18 +87,18 @@
         qm set {{ container_vmid }} --nameserver 192.168.{{ container_vlan_id }}.1
         qm guest exec {{ container_vmid }} -- sh -c "echo '{{ container_hostname }}' > /etc/hostname"
         qm guest exec {{ container_vmid }} -- sh -c "echo '127.0.0.1 localhost {{ container_hostname }}' > /etc/hosts"
-      when: not (vm_info.proxmox_vms[0].config.net0 is search('{{ container_vlan_id }}'))
+      when: not (vm_info.proxmox_vms[0].config.net0 is defined and vm_info.proxmox_vms[0].config.net0 is search(container_vlan_id | string))
 
     - name: config ssh
       shell: |
         qm guest exec {{ container_vmid }} -- mkdir -p /root/.ssh
         qm guest exec {{ container_vmid }} -- chmod 700 /root/.ssh
         qm guest exec {{ container_vmid }} -- chown root:root /root/.ssh
-        qm guest exec {{ container_vmid }} -- bash -c "echo {{ lookup('file', '{{ container_ssh_file }}') }} > /root/.ssh/authorized_keys"
+        qm guest exec {{ container_vmid }} -- bash -c "echo {{ lookup('file', container_ssh_file) }} > /root/.ssh/authorized_keys"
         qm guest exec {{ container_vmid }} -- chmod 600 /root/.ssh/authorized_keys
 
     - name: restart vm
-      proxmox_kvm:
+      community.proxmox.proxmox_kvm:
         api_host: '{{ proxmox_node }}'
         api_user: 'root@pam'
         api_password: '{{ proxmox_password }}'
@@ -134,53 +134,28 @@
         name: "{{ item }}"
         state: present
       with_items:
-        - nginx
-        - libnginx-mod-stream
         - unzip
         - cron
-      
-    - name: config mod_stream
-      delegate_to: "{{ container_hostname }}"
-      copy:
-        dest: /etc/nginx/modules-available/front-stream.conf
-        content: "{{ lookup('template', 'stream.conf') }}"
+        - curl
+        - gnupg2
+        - ca-certificates
+        - lsb-release
+        - ubuntu-keyring
 
-    - name: enable front stream
-      delegate_to: "{{ container_hostname }}"
-      ansible.builtin.file:
-        src: /etc/nginx/modules-available/front-stream.conf
-        dest: /etc/nginx/modules-enabled/front-stream.conf
-        state: link
+    - import_tasks: ../ansible/add-nginx-ubuntu.yaml
 
-    - name: config sites
-      delegate_to: "{{ container_hostname }}"
-      copy:
-        dest: /etc/nginx/sites-available/{{ item.dest }}
-        content: "{{ lookup('template', '{{ item.src }}') }}"
-      loop:
-        - { src: 'default', dest: 'default' }
-        - { src: 'fallback', dest: 'speed' }
-
-    - name: enable sites
-      delegate_to: "{{ container_hostname }}"
-      ansible.builtin.file:
-        src: /etc/nginx/sites-available/{{ item }}
-        dest: /etc/nginx/sites-enabled/{{ item }}
-        state: link
-      loop:
-        - default
-        - speed  
-
-    - name: create xray user
+    - name: install xray
       delegate_to: "{{ container_hostname }}"
       become: yes
-      shell: |
-        sudo adduser --shell /usr/sbin/nologin --no-create-home xrayuser
-        sudo wget https://github.com/XTLS/Xray-core/releases/download/v24.12.31/Xray-linux-64.zip
-        sudo unzip ./Xray-linux-64.zip -d /opt/xray
-        sudo chmod +x /opt/xray/xray
-        sudo chown -R xrayuser:xrayuser /opt/xray
-        sudo setcap cap_net_bind_service=+ep /opt/xray/xray
+      shell: '{{ item }}'
+      with_items:
+        - ver=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | awk -F'"' '/tag_name/ {print $4}')
+        - wget https://github.com/XTLS/Xray-core/releases/download/${ver}/Xray-linux-64.zip
+        - adduser --shell /usr/sbin/nologin --no-create-home xrayuser
+        - unzip ./Xray-linux-64.zip -d /opt/xray
+        - chmod +x /opt/xray/xray
+        - chown -R xrayuser:xrayuser /opt/xray
+        - setcap cap_net_bind_service=+ep /opt/xray/xray
       args:
         creates: /opt/xray/xray
 
@@ -189,19 +164,38 @@
       copy:
         dest: /etc/systemd/system/xray.service
         content: "{{ lookup('template', 'xray.service') }}"
+      args:
+        creates: /etc/systemd/system/xray.service        
 
-    - name: create xray config
-      delegate_to: "{{ container_hostname }}"
-      copy:
-        dest: /opt/xray/config.json
-        content: "{{ lookup('template', 'xray-config.json') }}"
-
-    - name: start xray
+    - name: enable xray, start after certs are in place
       delegate_to: "{{ container_hostname }}"
       become: yes
       service:
         name: xray
         enabled: yes
+
+    ## Update configs 
+    ##
+    - name: copy main nginx config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/nginx.conf
+        content: "{{ lookup('template', 'nginx.conf') }}"
+
+    - name: copy sites config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ item.dest }}
+        content: "{{ lookup('template', item.src) }}"
+      loop:
+        - { src: 'default.conf', dest: 'default.conf' }
+        - { src: 'fallback.conf', dest: 'speed.conf' }
+
+    - name: update xray config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /opt/xray/config.json
+        content: "{{ lookup('template', 'xray-config.json') }}"       
 
     ## ssl certificates
     ##
@@ -209,6 +203,7 @@
       vars:
         sites: '-d {{ domain_name }} -d speed.{{ domain_name }}'
         reloadcmd: "sudo chown -R xrayuser:xrayuser /usr/ssl && sudo chmod g+rwx -R /usr/ssl/ && sudo systemctl restart nginx && sudo systemctl restart xray"
+  
 
     ## As we set mac_addr, the dhcp will assign the container_ip to the vm
     ##

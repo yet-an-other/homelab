@@ -1,0 +1,39 @@
+- name: add nginx on ubuntu 
+  become: yes
+  delegate_to: "{{ container_hostname }}"
+  block:
+    - name: install required packages
+      apt:
+        name        : "{{ item }}"
+        state       : present
+      with_items:
+        - curl
+        - ca-certificates
+        - gnupg2
+        - lsb-release
+        - ubuntu-keyring
+
+    - name: add nginx repo
+      shell: |
+        curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
+          | tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
+      args:
+        creates: /usr/share/keyrings/nginx-archive-keyring.gpg
+
+    - name: register nginx repository
+      shell: |
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+        http://nginx.org/packages/ubuntu `lsb_release -cs` nginx" \
+          | tee /etc/apt/sources.list.d/nginx.list
+      args:
+        creates: /etc/apt/sources.list.d/nginx.list
+
+    - name: update repository cache
+      apt:
+        update_cache: yes 
+
+    - name: install nginx & mod_stream  
+      apt:
+        name:
+          - nginx
+        state: present  
