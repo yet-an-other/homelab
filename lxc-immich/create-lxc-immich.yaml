@@ -52,7 +52,7 @@
         force: true
         content: '{{ lookup("template", "{{ item.src }}") }}'
       with_items:
-        - { src: '.env', dest: '~/immich/.env' }
+        - { src: 'generated.env', dest: '~/immich/.env' }
         - { src: 'docker-compose.yaml', dest: '~/immich/docker-compose.yaml' }
 
     ## immich setup
