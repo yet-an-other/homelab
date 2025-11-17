@@ -1,0 +1,129 @@
+    
+- name: create and preconfigure alma vm
+  block:    
+    - name: create vm
+      delegate_to       : localhost
+      community.proxmox.proxmox_kvm:
+        node            : '{{ proxmox.node }}'
+        api_host        : '{{ proxmox.node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox.password }}'
+        newid           : '{{ vm.id }}'
+        name            : '{{ vm.hostname }}'
+        cores           : '{{ vm.cores }}'
+        clone           : '{{ vm.template }}'
+      register          : vm_creation_result
+
+    - name: print info
+      ansible.builtin.debug:
+        msg             : '{{ vm_creation_result }}'
+
+    - name: wait for vm to be created
+      delegate_to       : localhost
+      community.proxmox.proxmox_vm_info:
+        api_host        : '{{ proxmox.node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox.password }}'
+        name            : '{{ vm.hostname }}'
+        node            : '{{ proxmox.node }}'
+      register          : vm_wait_info
+      until             : vm_wait_info.proxmox_vms | length > 0
+      retries           : 30
+      delay             : 2
+
+    - name: start vm
+      delegate_to       : localhost
+      community.proxmox.proxmox_kvm:
+        api_host        : '{{ proxmox.node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox.password }}'
+        name            : '{{ vm.hostname }}'
+        node            : '{{ proxmox.node }}'
+        state           : started
+      
+
+    - name: get vm info
+      delegate_to       : localhost
+      community.proxmox.proxmox_vm_info:
+        api_host        : '{{ proxmox.node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox.password }}'
+        name            : '{{ vm.hostname }}'
+        node            : '{{ proxmox.node }}'
+        config          : current
+      register          : vm_info      
+
+    # - name: print info
+    #   ansible.builtin.debug:
+    #     msg             : '{{ vm_info }}'
+
+    - name: configure vm resources
+      block:
+        - name: set memory
+          shell: |
+            qm set {{ vm.id }} --memory {{ vm.memory }}
+          when: vm.memory is defined and vm_info.proxmox_vms[0].config.memory != vm.memory | string
+          register: memory_change
+
+        - name: set onboot
+          shell: |
+            qm set {{ vm.id }} --onboot 1
+          when: not(vm_info.proxmox_vms[0].config.onboot is defined) or vm_info.proxmox_vms[0].config.onboot != 1
+          register: onboot_change
+
+        - name: configure vm network
+          shell: |
+            qm set {{ vm.id }} --net0 virtio,macaddr={{ vm.mac }},bridge=vmbr0,tag={{ vm.vlan_id }}
+            qm set {{ vm.id }} --nameserver 192.168.{{ vm.vlan_id }}.1
+          when: not (vm_info.proxmox_vms[0].config.net0 is search('tag=' + vm.vlan_id | string))
+          register: network_change
+
+        - name: set ip address
+          shell: |
+            qm set {{ vm.id }} --ipconfig0 ip={{ vm.ip }}/24,gw=192.168.{{ vm.vlan_id }}.1
+          when: > 
+            vm.ip is defined and 
+            not (
+              vm_info.proxmox_vms[0].config.ipconfig0 is defined and 
+              vm_info.proxmox_vms[0].config.ipconfig0 is search(vm.ip))
+          register: ip_change
+
+        - name: get current hostname
+          become: yes
+          shell: qm guest exec {{ vm.id }} -- cat /proc/sys/kernel/hostname
+          #shell: qm guest exec {{ vm.id }} -- /usr/bin/hostnamectl status --static
+          register: hostname_output
+          changed_when: false
+
+        - set_fact:
+            current_hostname: "{{ (hostname_output.stdout | default('') | from_json).get('out-data','') | trim }}"
+
+        - name: set hostname
+          become: yes
+          shell: |
+                qm guest exec {{ vm.id }} -- bash -c 'hostnamectl set-hostname {{ vm.hostname }}'
+          when: vm.hostname is defined and current_hostname != vm.hostname
+          register: hostname_change
+
+        - name: set tag_name
+          shell: |
+            qm set {{ vm.id }} --tag {{ vm.tag_name }}
+          when: not (vm_info.proxmox_vms[0].tags is defined and vm_info.proxmox_vms[0].tags is search(vm.tag_name))
+          register: tag_change
+
+        - name: restart vm to apply changes
+          delegate_to       : localhost
+          community.proxmox.proxmox_kvm:
+            api_host        : '{{ proxmox.node }}'
+            api_user        : 'root@pam'
+            api_password    : '{{ proxmox.password }}'
+            name            : '{{ vm.hostname }}'
+            node            : '{{ proxmox.node }}'
+            state           : restarted
+          when: >
+            memory_change is changed or
+            onboot_change is changed or
+            network_change is changed or
+            ip_change is changed or
+            hostname_change is changed or
+            tag_change is changed

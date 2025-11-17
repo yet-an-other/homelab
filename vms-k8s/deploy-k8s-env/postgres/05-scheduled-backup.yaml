@@ -1,24 +1,15 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
-  name: '{{ pgi_name }}-backup'
+  name: '{{ pgi_name }}-scheduled-backup'
   namespace: {{ app_namespace }}
 spec:
+  # Daily backup at midnight
   schedule: "0 0 0 * * *"
   backupOwnerReference: self
   cluster:
     name: {{ pgi_name }}
   immediate: true
-
----
-## run backup if needed
-##
-apiVersion: postgresql.cnpg.io/v1
-kind: Backup
-metadata:
-  name: '{{ pgi_name }}-backup'
-  namespace: {{ app_namespace }}
-spec:
-  backupOwnerReference: self
-  cluster:
-    name: {{ pgi_name }}
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

@@ -1,43 +1,98 @@
+## Ansible Playbook to setup Proxmox Node
+##
+## Usage: ansible-playbook -i ansible/inventory.secret.yaml node/node-setup.yaml 
+##
+## Variables:
+## - node_id: unique id for the node (used for ip and other settings)
+## - ansible_ssh_private_key_file: path to ssh private key file
+## - ansible_user: ssh user
+## - ssh_pub_key_file: path to ssh public key file
+## - domain_name: domain name for the node
+##
+## Steps performed:
+## - Correct Proxmox VE sources and disable subscription nag
+## - Update system
+## - Setup ssh login with certificate
+## - Install iperf3, btop, lldpd (frr removed as proxmox 9 has it built in)
+## - Create thunderbolt network
+## - Add intel & quemu on grub
+## - Setup local ssh config
+## - Reboot node
 
 - name: run post install script
   hosts: all
   become: yes
   tasks:
+    - name: Correcting Debian Sources
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/debian.sources
+        content: |
+          Types: deb
+          URIs: http://deb.debian.org/debian/
+          Suites: trixie trixie-updates
+          Components: main contrib non-free-firmware
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+          Enabled: false
+
+          Types: deb
+          URIs: http://security.debian.org/debian-security/
+          Suites: trixie-security
+          Components: main contrib non-free-firmware
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+          Enabled: false
+
+          Types: deb
+          URIs: http://deb.debian.org/debian/
+          Suites: trixie trixie-updates
+          Components: main contrib 
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+          Enabled: true
+
+          Types: deb
+          URIs: http://security.debian.org/debian-security/
+          Suites: trixie-security
+          Components: main contrib
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+          Enabled: true
+
     - name: Correcting Proxmox VE Sources
-      ansible.builtin.shell: |
-        cat <<EOF >/etc/apt/sources.list
-        deb http://deb.debian.org/debian bookworm main contrib
-        deb http://deb.debian.org/debian bookworm-updates main contrib
-        deb http://security.debian.org/debian-security bookworm-security main contrib
-        EOF
-        echo 'APT::Get::Update::SourceListWarnings::NonFreeFirmware "false";' >/etc/apt/apt.conf.d/no-bookworm-firmware.conf
-
-    - name: Disable 'pve-enterprise' repository
-      ansible.builtin.shell: |
-        cat <<EOF >/etc/apt/sources.list.d/pve-enterprise.list
-        # deb https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise
-        EOF
-
-    - name: Enable 'pve-no-subscription' repository
-      ansible.builtin.shell: |
-        cat <<EOF >/etc/apt/sources.list.d/pve-install-repo.list
-        deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription
-        EOF
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/proxmox.sources
+        content: |
+          Types: deb
+          URIs: http://download.proxmox.com/debian/pve
+          Suites: trixie
+          Components: pve-no-subscription
+          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg          
 
     - name: Correct ceph package sources
-      ansible.builtin.shell: |
-        cat <<EOF >/etc/apt/sources.list.d/ceph.list
-        # deb https://enterprise.proxmox.com/debian/ceph-quincy bookworm enterprise
-        # deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
-        # deb https://enterprise.proxmox.com/debian/ceph-reef bookworm enterprise
-        # deb http://download.proxmox.com/debian/ceph-reef bookworm no-subscription
-        deb http://download.proxmox.com/debian/ceph-squid bookworm no-subscription
-        EOF
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/ceph.sources
+        content: |
+          Types: deb
+          URIs: https://enterprise.proxmox.com/debian/ceph-squid
+          Suites: trixie
+          Components: enterprise
+          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+          Enabled: false
+
+          Types: deb
+          URIs: http://download.proxmox.com/debian/ceph-squid
+          Suites: trixie
+          Components: no-subscription
+          Enabled: true
+
+    - name: Disable enterprise repo
+      ansible.builtin.lineinfile:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+        regexp: '^Enabled='
+        line: 'Enabled: false'
 
     - name: Removing subscription nag from UI
-      ansible.builtin.shell: |
-        echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/.*data\.status.*{/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
-        apt --reinstall install proxmox-widget-toolkit &>/dev/null
+      ansible.builtin.lineinfile:
+        path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+        regexp: "^.*res.data.status.toLowerCase.{2} !== 'active'.*"
+        line: "res.data.status.toLowerCase() === 'no'"
 
 
 - name: update system
@@ -58,7 +113,7 @@
     - name: make ssh login with ceritificate
       authorized_key: user={{ ansible_user }} key="{{ lookup('file', '{{ ssh_pub_key_file }}') }}"
 
-- name: install iperf3, btop, lldpd, frr
+- name: install iperf3, btop, lldpd #, frr
   hosts: all
   become: yes
   tasks:
@@ -70,7 +125,8 @@
         - iperf3
         - btop
         - lldpd
-        - frr
+        - s3fs
+        #- frr
 
 - name: create thunderbolt network
   hosts: all
@@ -102,8 +158,8 @@
       ansible.builtin.copy:
         dest: /etc/udev/rules.d/10-tb-en.rules
         content: |
-          ACTION=="move", SUBSYSTEM=="net", KERNEL=="en05", RUN+="/usr/local/bin/pve-en05.sh"
-          ACTION=="move", SUBSYSTEM=="net", KERNEL=="en06", RUN+="/usr/local/bin/pve-en06.sh"
+          ACTION=="add|move", SUBSYSTEM=="net", KERNEL=="en05", RUN+="/usr/local/bin/pve-en05.sh"
+          ACTION=="add|move", SUBSYSTEM=="net", KERNEL=="en06", RUN+="/usr/local/bin/pve-en06.sh"
 
     - name: create iface up scripts
       ansible.builtin.copy:
@@ -111,7 +167,20 @@
         content: |
           #! /bin/bash
           # this brings the renamed interface up and reprocesses any settings in /etc/network/interfaces for the renamed interface
-          /usr/sbin/ifup {{ item.line }}
+          # /usr/sbin/ifup {{ item.line }}
+
+          LOGFILE="/var/log/udev-debug.log"
+          echo "$(date): {{ item.line }} bringup triggered" >> "$LOGFILE"
+          for i in {1..5}; do
+              if ip link set {{ item.line }} up mtu 65520; then
+                  echo "$(date): {{ item.line }} up successful on attempt $i" >> "$LOGFILE"
+                  break
+              else
+                  echo "$(date): Attempt $i failed, retrying in 3 seconds..." >> "$LOGFILE"
+                  sleep 3
+              fi
+          done
+
       loop:
         - line: en05
         - line: en06
@@ -142,10 +211,6 @@
           auto lo
           iface lo inet loopback
 
-          auto lo:6
-          iface lo:6 inet static
-                  address fd40::4{{ node_id }}/128
-
           iface enp86s0 inet manual
 
           auto en05
@@ -168,6 +233,8 @@
 
           iface wlo1 inet manual
 
+          source /etc/network/interfaces.d/*
+
 # auto vmbr1
 # iface vmbr1 inet6 static
 #         address fd50::1/120
@@ -175,64 +242,126 @@
 #         bridge-stp off
 #         bridge-fd 0
       
-    - name: enable ip v4 forwarding
-      ansible.builtin.replace:
-        path: /etc/sysctl.conf
-        regexp: '#net.ipv4.ip_forward=1'
-        replace: 'net.ipv4.ip_forward=1'
+    - name: enable systemd-networkd
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        enabled: yes
+        state: started
 
-    - name: enable ip v6 forwarding
-      ansible.builtin.replace:
-        path: /etc/sysctl.conf
-        regexp: '#net.ipv6.conf.all.forwarding=1'
-        replace: 'net.ipv6.conf.all.forwarding=1'
-
-    - name: Create a directory for frr service if it does not exist
-      ansible.builtin.file:
-        path: /etc/systemd/system/frr.service.d
-        state: directory
-
-    - name: create dependency file for FRR to start after network
+    - name: enable ip v4 & v6 forwarding
       ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-sysctl.conf
+        content: |
+          net.ipv4.ip_forward=1
+          net.ipv6.conf.all.forwarding=1
+
+    - name: create thunderbolt startup service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/thunderbolt-interfaces.service
         content: |
           [Unit]
-          Wants=sys-subsystem-net-devices-en05.device sys-subsystem-net-devices-en06.device
-          After=sys-subsystem-net-devices-en05.device sys-subsystem-net-devices-en06.device
-        dest: /etc/systemd/system/frr.service.d/dependencies.conf
+          Description=Configure Thunderbolt Network Interfaces
+          After=network.target thunderbolt.service
+          Wants=network.target
 
-    - name: enable frr daemon
-      ansible.builtin.replace:
-        path: /etc/frr/daemons
-        regexp: 'fabricd=no'
-        replace: 'fabricd=yes'
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/local/bin/thunderbolt-startup.sh
 
-    - name: write frr config
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: create thunderbolt startup script
       ansible.builtin.copy:
+        dest: /usr/local/bin/thunderbolt-startup.sh
         content: |
-          frr version 8.5.2
-          frr defaults traditional
-          hostname {{ inventory_hostname }}
-          log syslog informational
-          service integrated-vtysh-config
-          !
-          interface en05
-            ipv6 router openfabric 1
-          exit
-          !
-          interface en06
-            ipv6 router openfabric 1
-          exit
-          !
-          interface lo
-            ipv6 router openfabric 1
-            openfabric passive
-          exit
-          !
-          router openfabric 1
-            net 49.0000.0000.000{{ node_id }}.00
-          exit
-          !
-        dest: /etc/frr/frr.conf
+          #!/bin/bash
+          # Thunderbolt interface startup script
+          LOGFILE="/var/log/thunderbolt-startup.log"
+
+          echo "$(date): Starting Thunderbolt interface configuration" >> "$LOGFILE"
+
+          # Wait up to 30 seconds for interfaces to appear
+          for i in {1..30}; do
+              if ip link show en05 &>/dev/null && ip link show en06 &>/dev/null; then
+                  echo "$(date): Thunderbolt interfaces found" >> "$LOGFILE"
+                  break
+              fi
+              echo "$(date): Waiting for Thunderbolt interfaces... ($i/30)" >> "$LOGFILE"
+              sleep 1
+          done
+
+          # Configure interfaces if they exist
+          if ip link show en05 &>/dev/null; then
+              /usr/local/bin/pve-en05.sh
+              echo "$(date): en05 configured" >> "$LOGFILE"
+          fi
+
+          if ip link show en06 &>/dev/null; then
+              /usr/local/bin/pve-en06.sh
+              echo "$(date): en06 configured" >> "$LOGFILE"
+          fi
+
+          echo "$(date): Thunderbolt configuration completed" >> "$LOGFILE"
+
+    - name: make scripts executable
+      ansible.builtin.command:
+        cmd: chmod +x /usr/local/bin/thunderbolt-startup.sh
+
+    - name: enable thunderbolt startup service
+      ansible.builtin.systemd:
+        name: thunderbolt-interfaces.service
+        enabled: yes
+        state: started
+
+
+    # - name: Create a directory for frr service if it does not exist
+    #   ansible.builtin.file:
+    #     path: /etc/systemd/system/frr.service.d
+    #     state: directory
+
+    # - name: create dependency file for FRR to start after network
+    #   ansible.builtin.copy:
+    #     content: |
+    #       [Unit]
+    #       Wants=sys-subsystem-net-devices-en05.device sys-subsystem-net-devices-en06.device
+    #       After=sys-subsystem-net-devices-en05.device sys-subsystem-net-devices-en06.device
+    #     dest: /etc/systemd/system/frr.service.d/dependencies.conf
+
+    # - name: enable frr daemon
+    #   ansible.builtin.replace:
+    #     path: /etc/frr/daemons
+    #     regexp: 'fabricd=no'
+    #     replace: 'fabricd=yes'
+
+    # - name: write frr config
+    #   ansible.builtin.copy:
+    #     content: |
+    #       frr version 8.5.2
+    #       frr defaults traditional
+    #       hostname {{ inventory_hostname }}
+    #       log syslog informational
+    #       service integrated-vtysh-config
+    #       !
+    #       interface en05
+    #         ipv6 router openfabric 1
+    #       exit
+    #       !
+    #       interface en06
+    #         ipv6 router openfabric 1
+    #       exit
+    #       !
+    #       interface lo
+    #         ipv6 router openfabric 1
+    #         openfabric passive
+    #       exit
+    #       !
+    #       router openfabric 1
+    #         net 49.0000.0000.000{{ node_id }}.00
+    #       exit
+    #       !
+    #     dest: /etc/frr/frr.conf
 
 
     - name: Attach tb ports to perf cpu

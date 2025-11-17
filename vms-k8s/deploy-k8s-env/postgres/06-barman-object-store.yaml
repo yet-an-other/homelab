@@ -1,0 +1,39 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: aws-inf-store
+  namespace: {{ app_namespace }}
+spec:
+  configuration:
+    destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_pg_working_path }}"
+    s3Credentials:
+      accessKeyId:
+        name: {{ aws_secret_name }}
+        key: aws_key_id
+      secretAccessKey:
+        name: {{ aws_secret_name }}
+        key: aws_secret_key
+    data:
+      compression: gzip
+    # Retention: keep last 7 daily backups
+    retentionPolicy: "7d"
+
+---
+
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: aws-inf-base-store
+  namespace: {{ app_namespace }}
+spec:
+  configuration:
+    destinationPath: "s3://{{ s3_pg_bucket }}/{{ s3_pgi_backup }}"
+    s3Credentials:
+      accessKeyId:
+        name: {{ aws_secret_name }}
+        key: aws_key_id
+      secretAccessKey:
+        name: {{ aws_secret_name }}
+        key: aws_secret_key
+    data:
+      compression: gzip

@@ -11,6 +11,7 @@
 # - container_ip: the ip address for the container
 # - container_ssh_file: the ssh public key file to add to the container
 # - domain_name: the domain name for the container
+# - container_mount: the shared folder to mount in the container (optional)
 
 - name: create and preconfigure container
   block:
@@ -25,6 +26,16 @@
         network: 'name=eth0,ip=dhcp,bridge=vmbr0{% if container_vlan_id != 10 %},tag={{ container_vlan_id }}{% endif %}'
         host: '{{ container_hostname }}'
       when: container_ip | length == 0
+
+    - name: set default shared folder
+      set_fact: 
+        mount: '/mnt/pve/cephfs/media/torrent,mp=/mnt/torrent,shared=1'
+      when: container_mount | length == 0
+
+    - name: set shared folder
+      set_fact: 
+        mount: '/mnt/pve/cephfs/media/{{ container_mount }},mp=/mnt/{{ container_mount }},shared=1'
+      when: container_mount | length > 0
 
     - name: create container
       community.general.proxmox:
@@ -49,7 +60,7 @@
         nameserver      : '192.168.{{ container_vlan_id }}.1'
         searchdomain    : '{{ domain_name }}'
         mounts: 
-          mp0           : '/mnt/pve/cephfs/media/torrent,mp=/mnt/torrent,shared=1'
+          mp0           : '{{ mount }}'
         features: 
           - nesting={{ container_nesting | default(0) }}
       delegate_to       : localhost

@@ -9,6 +9,7 @@
 #
 - name: add ssl certificate
   delegate_to: "{{ container_hostname }}"
+  become: yes
   block:
     - name: create ssl directory
       file:
@@ -16,24 +17,25 @@
         state: directory
 
     - name: install acme.sh
-      become: yes
       shell: |
         curl https://get.acme.sh | sh
       args:
-        creates: /root/.acme.sh
+        creates: ~/.acme.sh
 
     - name: register notification
       shell: |
         export NTFY_URL={{ ntfy_url }}
         export NTFY_TOPIC={{ ntfy_topic }}
-        /root/.acme.sh/acme.sh --set-notify --notify-hook ntfy
+        ~/.acme.sh/acme.sh --set-notify --notify-hook ntfy
       ignore_errors: yes
+      args:
+        creates: /usr/ssl/fullchain.crt      
 
     - name: issue certificate
       shell: |
         export CF_Token="{{ cf_token }}"
         export CF_Zone_ID="{{ cf_zone_id }}"
-        /root/.acme.sh/acme.sh --issue \
+        ~/.acme.sh/acme.sh --issue \
         {{ sites }} \
         --force \
         --dns dns_cf \

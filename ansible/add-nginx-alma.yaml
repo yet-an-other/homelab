@@ -1,0 +1,62 @@
+- name: add nginx to alma vm
+  become: yes
+  delegate_to: "{{ vm.hostname }}"
+  block:
+    - name: register repository
+      copy:
+        dest: /etc/yum.repos.d/nginx.repo
+        content: |
+          [nginx-stable]
+          name=nginx stable repo
+          baseurl=http://nginx.org/packages/centos/$releasever/$basearch/
+          gpgcheck=1
+          enabled=1
+          gpgkey=https://nginx.org/keys/nginx_signing.key
+          module_hotfixes=true
+
+    - name: update repository cache
+      dnf:
+        update_cache: yes
+
+    - name: install nginx
+      dnf:
+        name: nginx
+        state: present
+
+    - name: enable nginx
+      service:
+        name: nginx
+        enabled: yes
+
+    ## firewall for nginx
+    ##
+    - name: open firewall for nginx
+      firewalld:
+        port: "{{ item.port }}/{{ item.proto }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop: "{{ fw_ports }}"
+
+    ## Allow nginx to bind ports in SELinux
+    ##
+    - name: enable ports for nginx on SELinux
+      delegate_to: "{{ vm.hostname }}"
+      community.general.seport:
+        setype: http_port_t
+        state: present
+        ports: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop: "{{ se_ports }}"
+      # shell: semanage port -a -t http_port_t -p {{ item.proto }} {{ item.port }}
+      # loop: "{{ se_ports }}"
+
+    ## Allow nginx connect to upstream servers in SELinux
+    ##
+    - name: enable nginx upstream connections in SELinux
+      delegate_to: "{{ vm.hostname }}"
+      seboolean:
+        name: httpd_can_network_connect
+        state: yes
+        persistent: yes      
+  

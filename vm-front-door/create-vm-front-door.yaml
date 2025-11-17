@@ -1,0 +1,136 @@
+
+- name: set variables for vm creation
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox:
+      node              : "{{ inventory_hostname }}"    
+      password          : "{{ ansible_password }}"
+    vm:
+      template          : 'alma10-template'
+      hostname          : 'front-door'
+      vlan_id           : 20
+      ip                : '192.168.20.204'
+      id                : 20204
+      memory            : 1024
+      cores             : 1
+      disk_size         : '10G'
+      mac               : 'BC:24:12:00:20:04'
+      tag_name          : 'dmz'
+    settings:
+      internal_gw       : '192.168.40.204' # nginx-vip, the ip address of the internal gateway
+      fallback_host     : 'speedtest'
+
+  tasks:
+    - name: create and preconfigure alma vm
+      import_tasks: ../ansible/create-alma-vm.yaml
+
+    - name: add "{{ vm.hostname }}" to inventory
+      add_host:
+        name: '{{ vm.hostname }}'
+        ansible_python_interpreter: 'auto_silent'
+        ansible_host: '{{ vm.ip }}' ## dhcp should assign the ip based on mac
+        ansible_user: 'ib'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      changed_when: false
+
+    - name: Wait for VM to start running
+      community.proxmox.proxmox_vm_info:
+        api_host: '{{ proxmox.node }}'
+        api_user: 'root@pam'
+        api_password: '{{ proxmox.password }}'
+        name        : '{{ vm.hostname }}'
+        node        : '{{ proxmox.node }}'
+        config      : current
+      delegate_to: localhost
+      register: uvm_info
+      until: uvm_info is defined and uvm_info.proxmox_vms is defined and uvm_info.proxmox_vms[0].status == "running"
+      retries: 30
+      delay: 1   
+
+    - name: add nginx to alma vm
+      import_tasks: ../ansible/add-nginx-alma.yaml
+      vars:
+        fw_ports:
+          - { port: 443, proto: tcp }
+          - { port: 13779, proto: tcp }
+        se_ports:
+          - { port: 20000, proto: tcp }
+          - { port: 20002, proto: tcp }
+          - { port: 20003, proto: tcp }
+          - { port: 20004, proto: tcp }
+          - { port: 13779, proto: tcp }
+
+    - name: copy main nginx config
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      copy:
+        dest: /etc/nginx/nginx.conf
+        content: "{{ lookup('template', 'nginx.conf') }}"
+
+    - name: copy sites config
+      become: yes
+      delegate_to: "{{ vm.hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ item.dest }}
+        content: "{{ lookup('template', item.src) }}"
+      loop:
+        - { src: 'default.conf', dest: 'default.conf' }
+        - { src: 'fallback.conf', dest: 'speed.conf' }
+
+    - name: install xray
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      shell: |
+        curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o /tmp/xray.zip 
+        unzip -qq /tmp/xray.zip -d /opt/xray/
+        mkdir -p /var/log/xray
+        adduser --shell /usr/sbin/nologin --no-create-home xrayuser
+        chmod +x /opt/xray/xray
+        chown -R xrayuser:xrayuser /opt/xray
+        chown -R xrayuser:xrayuser /var/log/xray
+        setcap cap_net_bind_service=+ep /opt/xray/xray
+        rm /tmp/xray.zip
+      args:
+        creates: /opt/xray/xray
+
+    - name: create xray service
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      copy:
+        dest: /etc/systemd/system/xray.service
+        content: "{{ lookup('template', 'xray.service') }}"     
+
+    - name: update xray config
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      copy:
+        dest: /opt/xray/config.json
+        content: "{{ lookup('template', 'xray-config.json') }}" 
+
+    - name: enable xray, start after certs are in place
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      service:
+        name: xray
+        enabled: yes
+
+
+    ## ssl certificates
+    ##
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d {{ domain_name }} -d speed.{{ domain_name }}'
+        container_hostname: '{{ vm.hostname }}'
+        reloadcmd: "sudo chown -R xrayuser:xrayuser /usr/ssl && sudo chmod g+rwx -R /usr/ssl/ && sudo systemctl restart nginx && sudo systemctl restart xray"
+  
+
+    ## As we set mac_addr, the dhcp will assign the container_ip to the vm
+    ##
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ vm.hostname }}'
+        host: '{{ vm.ip }}'          
+         
+
+
