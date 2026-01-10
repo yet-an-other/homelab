@@ -1,66 +1,57 @@
 - name: create lxc container
-  hosts: 'prox-n2'
+  hosts: 'prox-n1'
   gather_facts: false
   vars:
     proxmox_node        : "{{ inventory_hostname }}"
     proxmox_password    : "{{ ansible_password }}"
     container_ssh_file  : "{{ ssh_pub_key_file }}"
-    container_hostname  : 'upkuma'
+    container_hostname  : 'uptime'
     container_vlan_id   : 10
     container_ip        : ''
-    container_vmid      : 10301
+    container_vmid      : 10008
     container_disk_size : 4
     container_memory    : 1024
     container_cores     : 1
     container_user      : 'root'
     container_mount     : ''
+    container_nesting   : 1
+    container_mac       : 'BC:24:12:00:10:08'
+
   tasks:
     # create basic container
     #
     - import_tasks: ../ansible/create-lxc.yaml
 
-    ## uptime kuma setup
+    # install docker
+    #
+    - import_tasks: ../ansible/add-docker.yaml
+
+    ## Uptime Kuma setup
     ##
-    - name: setup uptime kuma
+    - name: create uptime kuma directory
       delegate_to: "{{ container_hostname }}"
       become: yes
-      block:
+      file:
+        path: ~/uptime-kuma
+        state: directory
 
-        - name: update system
-          apt:
-            update_cache: yes
-            upgrade     : dist
-            autoremove  : yes
-            autoclean   : yes
-            
-        - name: install packages
-          apt:
-            name: "{{ item }}"
-            state: present
-          with_items:
-            - git
-            - nodejs
-            - npm
-            - nginx 
-            - curl
+    - name: copy docker-compose file
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: ~/uptime-kuma/docker-compose.yaml
+        content: "{{ lookup('template', 'docker-compose.yaml') }}"
+    
+    - name: run uptime kuma container compose up
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      shell: |
+        cd ~/uptime-kuma
+        docker compose up -d -y
 
-        - name: clone repo
-          git:
-            repo: 'https://github.com/louislam/uptime-kuma.git'
-            dest: /opt/uptime-kuma
-
-        - name: install requirements
-          shell: |
-            cd /opt/uptime-kuma
-            npm install pm2 -g 
-            pm2 install pm2-logrotate
-            npm run setup
-            pm2 start server/server.js --name uptime-kuma
-            pm2 save && pm2 startup
-          args:
-            creates: /opt/uptime-kuma/node_modules
-        
-
+    # install nginx
+    #
+    - import_tasks: ../ansible/add-nginx-ubuntu.yaml
+      
     ## Nginx
     ##
     - name: create nginx config

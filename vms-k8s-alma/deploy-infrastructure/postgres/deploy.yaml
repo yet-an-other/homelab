@@ -1,0 +1,88 @@
+- name: generate suffix
+  set_fact:
+    suffix: "{{ now(utc=true,fmt='%Y-%m-%d') }}-{{ lookup('community.general.random_string', length=6, special=false) }}" 
+
+- name: deploy postgresql cluster
+  block:
+    - name: deploy postgresql crds
+      # kubernetes.core.k8s:
+      #   state: present
+      #   src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
+      ansible.builtin.shell:
+        cmd: kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
+      register: cnpg_crd_result
+      changed_when: "'created' in cnpg_crd_result.stdout or 'configured' in cnpg_crd_result.stdout"
+
+    - name: Deploy barman plugin
+      kubernetes.core.k8s:
+        state: present
+        src: https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.8.0/manifest.yaml   
+
+    - name: Wait for CNPG controller to be ready
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: cnpg-system
+        label_selectors:
+          - app.kubernetes.io/name=cloudnative-pg
+      register: cnpg_controller_pods
+      until: 
+        - cnpg_controller_pods.resources is defined
+        - cnpg_controller_pods.resources | length > 0
+        - cnpg_controller_pods.resources | map(attribute='status.phase') | list | unique == ['Running']
+        - cnpg_controller_pods.resources | map(attribute='status.containerStatuses') | flatten | map(attribute='ready') | select('equalto', false) | list | length == 0
+      retries: 15
+      delay: 10            
+
+    - name: deploy postgresql database
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'postgres/00-namespace.yaml') }}"      
+        - "{{ lookup('template', 'postgres/01-pgi-secret.yaml') }}"
+        - "{{ lookup('template', 'postgres/04-aws-secret.yaml') }}"
+        - "{{ lookup('template', 'postgres/05-scheduled-backup.yaml') }}"
+        - "{{ lookup('template', 'postgres/06-barman-object-store.yaml') }}"
+        - "{{ lookup('template', 'postgres/07-pgi-cluster.yaml') }}"
+
+    - name: Fix PostgreSQL passwords
+      block:
+        - name: Wait for PostgreSQL cluster to be ready
+          kubernetes.core.k8s_info:
+            kind: Cluster
+            api_version: postgresql.cnpg.io/v1
+            namespace: "{{ pg_namespace }}"
+            name: "{{ pgi_name }}"
+          register: pg_cluster
+          until:
+            - pg_cluster.resources is defined
+            - pg_cluster.resources | length > 0
+            - pg_cluster.resources[0].status is defined
+            - pg_cluster.resources[0].status.readyInstances is defined
+            - pg_cluster.resources[0].status.readyInstances == pg_cluster.resources[0].spec.instances
+            - pg_cluster.resources[0].status.phase == "Cluster in healthy state"
+          retries: 40
+          delay: 15
+
+        - name: Update Postgres password for pg-inf-1
+          ansible.builtin.shell: |
+            kubectl exec -n postgres pg-inf-1 -- bash -c "psql -U postgres -d postgres -c \"ALTER ROLE postgres WITH PASSWORD '{{ pgi_password }}'\""
+            kubectl exec -n postgres pg-inf-1 -- bash -c "psql -U postgres -d zitadel -c \"ALTER ROLE postgres WITH PASSWORD '{{ pgi_password }}'\""
+            kubectl exec -n postgres pg-inf-1 -- bash -c "psql -U postgres -d grafana -c \"ALTER ROLE postgres WITH PASSWORD '{{ pgi_password }}'\""
+
+  vars:
+    app_namespace: '{{ pg_namespace }}'
+    pgi_storage_size: 2Gi
+    s3_pg_bucket: ib.pg-backup
+
+    # the actual db storage pg-proxmox or pg-hetzner 
+    #
+    s3_pg_working_path: 'pg-{{ env }}'
+
+    # folder with backup,if empty will be create dbs from scratch
+    # in pg-inf-base - the base db with initial configurations
+    # in pg-hetzner - the actual production db
+    # for the pouduction db - better to rename actual production backup folder and restore from there
+    #
+    s3_pgi_backup: 'pg-inf-base' 
+    aws_secret_name: aws-secret

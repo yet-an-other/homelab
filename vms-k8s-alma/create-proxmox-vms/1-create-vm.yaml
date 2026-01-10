@@ -1,0 +1,83 @@
+- name: set variables for vm creation
+  set_fact:
+    vm:
+      template          : '{{ vms.template }}'
+      vlan_id           : '{{ vms.vlan_id }}'
+      hostname          : '{{ item.vm_role }}-{{ item.vm_id }}'
+      ip                : '{{ vms.ip_mask }}{{ item.vm_id }}'
+      id                : '{{ vms.id_mask }}{{ item.vm_id }}'
+      memory            : '{{ item.vm_memory }}'
+      cores             : '{{ item.vm_cores }}'
+      disk_size         : '{{ item.vm_disk_size }}'
+      mac               : '{{ vms.mac_mask }}{{ item.vm_id }}'
+      tag_name          : '{{ vms.tag }}'
+      storage           : '{{ vms.storage }}'
+      type              : "alma"
+      user              : 'ib'
+
+
+- name: check if vm exists
+  delegate_to       : localhost
+  community.proxmox.proxmox_vm_info:
+    api_host        : '{{ proxmox.node }}'
+    api_user        : 'root@pam'
+    api_password    : '{{ proxmox.password }}'
+    name            : '{{ vm.hostname }}'
+    config          : current
+  register          : vm_check 
+
+- name: create vm
+  include_tasks: ../ansible/create-vm.yaml
+  when: vm_check.proxmox_vms[0].tags is not defined or vm_check.proxmox_vms[0].tags != vm.tag_name
+
+- name: Migrate VM on dedicated node
+  community.proxmox.proxmox_kvm:
+    api_host    : '{{ proxmox.node }}'
+    api_user    : 'root@pam'
+    api_password: '{{ proxmox.password }}'
+    name        : '{{ vm.hostname }}'
+    node        : '{{ item.target_node }}'
+    storage     : '{{ vm.storage }}'
+    migrate     : true
+  delegate_to   : localhost
+  retries: 3
+
+- name: Check current disk storage location
+  delegate_to: '{{ item.target_node }}'
+  ansible.builtin.shell: >
+    qm config {{ vm.id }} | grep '^scsi0:' | awk -F':' '{print $2}' | xargs
+  register: current_disk_storage
+  changed_when: false
+
+- name: print current disk storage
+  ansible.builtin.debug:
+    msg: "'{{ current_disk_storage.stdout }}'"
+
+- name: Move disk from shared to local storage
+  delegate_to: '{{ item.target_node }}'
+  ansible.builtin.command: >
+    qm move_disk {{ vm.id }} scsi0 {{ vm.storage }} --delete 1
+  when: current_disk_storage.stdout != vm.storage
+
+- name: collect vars for static inventory
+  set_fact:
+    node:
+      ansible_host: '{{ vm.ip }}' ## dhcp should assign the ip based on mac
+      ansible_user: '{{ vm.user }}'
+      ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      name: '{{ vm.hostname }}'
+      role: '{{ item.vm_role }}'
+      public_ip: '{{ public_ips[item.vm_role] }}'
+      ip: '{{ vm.ip }}'
+
+- name: add node to array
+  set_fact:
+    nodes: "{{ nodes + [node] }}"
+
+# add record to local ssh config
+#
+- import_tasks: ../ansible/add-local-ssh-config.yaml
+  vars:
+    hostname: '{{ vm.hostname }}'
+    host: '{{ vm.ip }}'
+    user: 'ib'

@@ -1,0 +1,121 @@
+- hosts: 'all'
+  tasks: 
+
+    ### Update all packages
+    ###
+    - name: Upgrade all packages
+      become: yes
+      ansible.builtin.dnf:
+        name: "*"
+        update_cache: yes
+        state: latest
+
+    - name: Install selinux-utils
+      become: yes
+      ansible.builtin.dnf:
+        name: container-selinux
+        state: present
+
+    - name: Ensure cryptography and kubernetes python modules are installed from OS repo
+      become: yes
+      ansible.builtin.package:
+        name:
+          - python3-cryptography
+          - python3-kubernetes
+        state: present        
+  
+    - name: disable firewalld 
+      become: yes
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: no
+
+    # - name: open firewall for haproxy
+    #   become: yes
+    #   firewalld:
+    #     port: "{{ item.port }}/{{ item.proto }}"
+    #     permanent: yes
+    #     state: enabled
+    #     immediate: yes
+    #   loop: 
+    #     - { port: 80, proto: tcp }
+    #     - { port: 8080, proto: tcp }
+    #     - { port: 30443, proto: tcp }
+    #     - { port: 30080, proto: tcp }
+    #     - { port: 443, proto: tcp }
+    #     - { port: 6443, proto: tcp }
+    #     - { port: 6446, proto: tcp }
+    #     - { port: 2379-2380, proto: tcp }
+    #     - { port: 10250, proto: tcp }
+    #     - { port: 10257, proto: tcp }
+    #     - { port: 10259, proto: tcp }  
+
+    - name: set SELinux to permissive
+      become: yes
+      shell: |
+        setenforce 0
+        sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
+      when: ansible_selinux.status == "enabled"
+
+    - name: Install scisi modules for Longhorn
+      become: yes
+      block:
+        - name: Install iSCSI initiator for Longhorn
+          ansible.builtin.package:
+            name:
+              - iscsi-initiator-utils
+              - nfs-utils
+            state: present
+
+        - name: Enable iscsid
+          ansible.builtin.systemd:
+            name: iscsid
+            state: started
+            enabled: true
+
+        - name: Ensure iscsi_tcp kernel module is loaded
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/iscsi.conf
+            content: "iscsi_tcp\n"
+            owner: root
+            group: root
+            mode: '0644'
+        - name: Load iscsi_tcp now
+          ansible.builtin.modprobe:
+            name: iscsi_tcp
+            state: present
+
+  
+  ### Install & configure balancers
+  ###
+- import_playbook: 1-install-balancer.yaml
+
+  ### init nodes
+  ###
+- import_playbook: 2-init-nodes.yaml
+
+  ### install containerd
+  ###
+- import_playbook: 3-install-containerd.yaml
+
+  ### install kubernetes
+  ###
+- import_playbook: 4-install-k8s.yaml
+
+### create first control plane node
+###
+- import_playbook: 5-create-master-node.yaml
+  vars:
+    master_node: control-nodes[0]
+
+
+### create rest control plane nodes
+###
+- import_playbook: 6-join-control-nodes.yaml
+  vars:
+    control_nodes: control-nodes[1], control-nodes[2]
+
+### create workers
+###
+- import_playbook: 7-join-worker-nodes.yaml

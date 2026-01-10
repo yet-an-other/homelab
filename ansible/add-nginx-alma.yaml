@@ -1,6 +1,6 @@
 - name: add nginx to alma vm
   become: yes
-  delegate_to: "{{ vm.hostname }}"
+  delegate_to: "{{ hostname }}"
   block:
     - name: register repository
       copy:
@@ -41,7 +41,6 @@
     ## Allow nginx to bind ports in SELinux
     ##
     - name: enable ports for nginx on SELinux
-      delegate_to: "{{ vm.hostname }}"
       community.general.seport:
         setype: http_port_t
         state: present
@@ -54,7 +53,6 @@
     ## Allow nginx connect to upstream servers in SELinux
     ##
     - name: enable nginx upstream connections in SELinux
-      delegate_to: "{{ vm.hostname }}"
       seboolean:
         name: httpd_can_network_connect
         state: yes

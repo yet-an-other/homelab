@@ -1,0 +1,99 @@
+- name: create lxc container
+  hosts: 'prox-n1'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'backup'
+    container_vlan_id   : 10
+    container_ip        : ''
+    container_vmid      : 10316
+    container_disk_size : 2
+    container_memory    : 512
+    container_cores     : 1
+    container_user      : 'root'
+    container_nesting   : 1
+    container_mount     : 'src'
+    container_host_mount: '/'
+
+    dst_mount          : 'dst'
+  tasks:
+
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc-alpine.yaml
+
+    # add usb mount point
+    #
+    - name: check if destination mount point already exists
+      delegate_to: "{{ proxmox_node}}"
+      become: true
+      ansible.builtin.shell:
+        cmd: pct config {{ container_vmid }} | grep -q "^mp1:"
+      register: mount_point_exists
+      failed_when: false
+      changed_when: false
+
+    - name: add destination mount point
+      delegate_to: "{{ proxmox_node}}"
+      become: true
+      ansible.builtin.shell:
+        cmd: |
+          pct set {{ container_vmid }} -mp1 /mnt/usb,mp=/mnt/{{ dst_mount }},shared=1
+      when: mount_point_exists.rc != 0
+
+    # create backup directory
+    #
+    - name: create backup directory
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      file:
+        path: '/root/backup'
+        state: directory
+        mode: '0755'
+
+    # copy backup script
+    #
+    - name: copy backup script
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      copy:
+        dest: "{{ item.dest }}"
+        force: true
+        content: '{{ lookup("template", item.src) }}'
+      with_items:
+        - { src: 'backup.conf', dest: '/root/backup/backup.conf' }
+        - { src: 'backup.sh', dest: '/root/backup/backup.sh' }
+        - { src: 'restore.sh', dest: '/root/backup/restore.sh' }
+        - { src: 'verify-deletions.sh', dest: '/root/backup/verify-deletions.sh' }
+
+    - name: set execute permission on backup scripts
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      file:
+        path: "{{ item }}"
+        mode: '0755'
+      with_items:
+        - '/root/backup/backup.sh'
+        - '/root/backup/restore.sh'
+        - '/root/backup/verify-deletions.sh'
+
+    # set then cron job for backup
+    #
+    - name: set cron job for backup
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      cron:
+        name: "backup script"
+        minute: "0"
+        hour: "3"
+        job: "cd /root/backup && /bin/bash backup.sh >> /root/backup.log 2>&1"
+
+    # patch config to connet to vm
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_hostname }}.{{ domain_name }}'
+        user: 'root'

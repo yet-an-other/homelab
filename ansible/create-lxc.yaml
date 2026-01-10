@@ -12,6 +12,24 @@
 # - container_ssh_file: the ssh public key file to add to the container
 # - domain_name: the domain name for the container
 # - container_mount: the shared folder to mount in the container (optional)
+# - container_host_mount: the shared folder path on the host (optional)
+# - homeroot: the home directory root for the container user (optional)
+
+# create moount directory if needed
+#
+- name: create mount directory
+  delegate_to: "{{ proxmox_node }}"
+  become: true
+  file:
+    path: "/mnt/pve/cephfs/{{ container_mount }}"
+    state: directory
+    mode: 0755
+  when: container_mount is defined and container_mount | length > 0
+
+- name: set homeroot if not defined
+  set_fact:
+    homeroot: "{{ '/root' if container_user == 'root' else '/home/' + container_user }}"
+  when: homeroot is not defined
 
 - name: create and preconfigure container
   block:
@@ -19,23 +37,44 @@
       set_fact: 
         network: 'name=eth0,gw=192.168.{{ container_vlan_id }}.1,ip={{ container_ip }}/24,bridge=vmbr0,tag={{ container_vlan_id }}'
         host: '{{ container_ip }}'
-      when: container_ip | length > 0
+      when: container_ip is defined and container_ip | length > 0
 
     - name: set network without ip
       set_fact: 
         network: 'name=eth0,ip=dhcp,bridge=vmbr0{% if container_vlan_id != 10 %},tag={{ container_vlan_id }}{% endif %}'
         host: '{{ container_hostname }}'
-      when: container_ip | length == 0
+      when: container_ip is not defined or container_ip | length == 0
+
+    - name: set mac address if defined
+      set_fact: 
+        network: '{{ network }},hwaddr={{ container_mac }}'
+      when: container_mac is defined and container_mac | length > 0
 
     - name: set default shared folder
       set_fact: 
         mount: '/mnt/pve/cephfs/media/torrent,mp=/mnt/torrent,shared=1'
-      when: container_mount | length == 0
+      when: container_mount is defined and container_mount | length == 0
+
+    - name: set container host mount {{ container_mount if container_mount is defined else 'none' }}
+      set_fact: 
+        container_host_mount: "{{ container_mount }}"
+      when: container_mount is defined and (container_host_mount is not defined or container_host_mount | length == 0)
 
     - name: set shared folder
       set_fact: 
-        mount: '/mnt/pve/cephfs/media/{{ container_mount }},mp=/mnt/{{ container_mount }},shared=1'
-      when: container_mount | length > 0
+        mount: '/mnt/pve/cephfs/{{ container_host_mount }},mp=/mnt/{{ container_mount }},shared=1'
+      when: container_mount is defined and container_mount | length > 0 
+
+
+    - name: get container info
+      community.proxmox.proxmox_vm_info:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        vmid            : '{{ container_vmid }}'
+      delegate_to       : localhost
+      register          : container_info
+
 
     - name: create container
       community.general.proxmox:
@@ -53,18 +92,29 @@
         onboot          : 1
         unprivileged    : 1
         disk_volume:
-          storage       : ceph-pool
+          storage       : vm-data
           size          : '{{ container_disk_size }}'
-        netif: 
+        netif:
           net0          : '{{ network }}'
         nameserver      : '192.168.{{ container_vlan_id }}.1'
         searchdomain    : '{{ domain_name }}'
-        mounts: 
-          mp0           : '{{ mount }}'
-        features: 
+        mounts: "{{ {'mp0': mount} if mount is defined else omit }}"
+        features:
           - nesting={{ container_nesting | default(0) }}
       delegate_to       : localhost
       register          : container
+      when: container_info.proxmox_vms | length == 0
+
+    - name: set container tag based on vlan
+      set_fact:
+        container_tag: "{{ {'10': 'lan', '20': 'dmz', '30': 'iot', '40': 'vip', '50': 'gst'}[container_vlan_id | string] | default('lan') }}"
+      changed_when: false
+
+    - name: tag container with {{ container_tag }}
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: pct set {{ container_vmid }} --tags {{ container_tag }}
+      when: container_tag is defined and (container_info.proxmox_vms[0].tags is not defined or container_info.proxmox_vms[0].tags != container_tag)
 
     - name: start container
       ignore_errors     : true
@@ -74,31 +124,48 @@
         api_password    : '{{ proxmox_password }}'
         vmid            : '{{ container_vmid }}'
         state           : started
-        timeout         : 50
       delegate_to       : localhost
 
-    - name: create .ssh directory
+    - name: wait for container to be fully started and responsive
+      delegate_to: "{{ proxmox_node }}"
       ansible.builtin.shell:
         cmd: |
-          pct exec {{ container.vmid }} -- mkdir -p /root/.ssh
-          pct exec {{ container.vmid }} -- chmod 700 /root/.ssh
-          pct exec {{ container.vmid }} -- chown root:root /root/.ssh
-          pct exec {{ container.vmid }} -- bash -c 'echo {{ lookup('file', '{{ container_ssh_file }}') }} > /root/.ssh/authorized_keys'
-          pct exec {{ container.vmid }} -- chmod 600 /root/.ssh/authorized_keys
+          pct status {{ container_vmid }} | grep -q "status: running" && \
+          pct exec {{ container_vmid }} -- test -d /root
+      register: container_ready
+      until: container_ready.rc == 0
+      retries: 30
+      delay: 2
+      changed_when: false
 
-    - name: create host
+    - name: check if ssh key already exists
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: |
+          pct exec {{ container_vmid }} -- test -f {{ homeroot }}/.ssh/authorized_keys && \
+          pct exec {{ container_vmid }} -- grep -qF '{{ lookup('file', container_ssh_file) }}' {{ homeroot }}/.ssh/authorized_keys
+      register: ssh_key_exists
+      failed_when: false
+      changed_when: false
+
+    - name: add .ssh key at {{ homeroot }}/.ssh
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: |
+          pct exec {{ container_vmid }} -- mkdir -p {{ homeroot }}/.ssh
+          pct exec {{ container_vmid }} -- chmod 700 {{ homeroot }}/.ssh
+          pct exec {{ container_vmid }} -- chown root:root {{ homeroot }}/.ssh
+          pct exec {{ container_vmid }} -- bash -c 'echo {{ lookup('file', container_ssh_file) }} > {{ homeroot }}/.ssh/authorized_keys'
+          pct exec {{ container_vmid }} -- chmod 600 {{ homeroot }}/.ssh/authorized_keys
+      when: ssh_key_exists.rc != 0
+
+
+    - name: create host container={{ container_hostname }} host={{ host }} with user={{ container_user }}
       add_host:
         name: '{{ container_hostname }}'
         ansible_host: '{{ host }}'
         ansible_user: '{{ container_user }}'
         ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
-
-    - name: debug
-      ansible.builtin.debug:
-        msg: '{{ item.line }}'
-      loop:
-        - line: '{{ container_hostname }}'
-        - line: '{{ host }}'
 
     - name: update system
       delegate_to: '{{ container_hostname }}'
@@ -108,3 +175,110 @@
         upgrade     : dist
         autoremove  : yes
         autoclean   : yes
+
+    - name: install packages
+      delegate_to: '{{ container_hostname }}'
+      become: true
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - curl
+        - eza
+        - git
+        - ca-certificates
+        - gnupg2
+        - lsb-release
+        - ubuntu-keyring
+        - btop
+    
+    - name: install neovim from official source if not present
+      block:
+        - name: get and setup binary
+          become: true
+          shell: |
+            curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
+            rm -rf /opt/nvim-linux-x86_64
+            tar -C /opt -xzf nvim-linux-x86_64.tar.gz 
+          args:
+            creates: /opt/nvim-linux-x86_64
+
+        - name: symlink nvim binary
+          file:
+            src: /opt/nvim-linux-x86_64/bin/nvim
+            dest: /usr/local/bin/nvim
+            state: link
+
+- name: config neovim
+  delegate_to: '{{ container_hostname }}'
+  ansible.builtin.shell:
+    cmd: |
+      mkdir -p ~/.config/nvim
+
+- name: nvim init.vim
+  delegate_to: '{{ container_hostname }}'
+  copy:
+    dest: ~/.config/nvim/init.vim
+    content: |
+      nnoremap <D-s> :w<cr>
+      inoremap <D-s> <esc>:w<cr>i
+      vnoremap <D-c> "+y
+      nnoremap <D-c> "+yy
+      inoremap <D-c> <Esc>"+yya
+      nnoremap <D-z> :undo<cr>
+      inoremap <D-z> <Esc>:undo<cr>i
+      nnoremap <D-y> :redo<cr>
+      inoremap <D-y> <Esc>:redo<cr>i
+
+      set clipboard=unnamedplus
+
+      lua << EOF
+      vim.g.clipboard = {
+        name = "OSC 52",
+        copy = {
+          ["+"] = require("vim.ui.clipboard.osc52").copy("+"),
+          ["*"] = require("vim.ui.clipboard.osc52").copy("*"),
+        },
+        paste = {
+          ["+"] = require("vim.ui.clipboard.osc52").paste("+"),
+          ["*"] = require("vim.ui.clipboard.osc52").paste("*"),
+        },
+      }
+      EOF
+
+- name: install oh-my-bash
+  delegate_to: '{{ container_hostname }}'
+  become: true
+  ansible.builtin.shell:
+    cmd: |
+      bash -c "$(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh)" "" --unattended
+  args:
+    creates: ~/.oh-my-bash
+
+- name: config bashrc to set neovim as default editor
+  delegate_to: '{{ container_hostname }}'
+  become: true
+  lineinfile:
+    path: ~/.bashrc
+    regexp: '^export EDITOR='
+    line: 'export EDITOR=nvim'
+
+- name: config bashrc
+  blockinfile: 
+    path: ~/.bashrc
+    prepend_newline: yes
+    append_newline: yes
+    block: |
+      # disable clock in oh-my-bash
+      THEME_SHOW_CLOCK=false
+
+      # eza aliases
+      alias l="eza -lah --group-directories-first --icons=auto"
+      alias lt="eza -a --tree --level=2 --long --icons --git --group-directories-first"
+      alias sl="sudo eza -lah --group-directories-first --icons=auto"
+      alias slt="sudo eza -a --tree --level=2 --long --icons --git --group-directories-first"
+
+      # directory aliases
+      alias ..="cd .."
+      alias ...="cd ../.."
+      alias ....="cd ../../.."

@@ -1,0 +1,88 @@
+## installs ntfy server on a lxc container
+##
+- name: create lxc container
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox_node        : "{{ inventory_hostname }}"
+    proxmox_password    : "{{ ansible_password }}"
+    container_ssh_file  : "{{ ssh_pub_key_file }}"
+    container_hostname  : 'syncthing'
+    container_vlan_id   : 20
+#    container_ip        : '192.168.20.221'
+    container_vmid      : 20221
+    container_disk_size : 4
+    container_memory    : 1024
+    container_user      : 'root'
+    container_mount     : 'syncthing'
+    container_host_mount: 'syncthing'
+    container_cores     : 1
+    container_nesting   : 1
+    container_mac       : 'BC:24:12:20:02:21'
+
+  tasks:
+    # create basic container
+    #
+    - import_tasks: ../ansible/create-lxc.yaml
+
+    # change permissions of mount point
+    #
+    - name: change permissions of mount point
+      delegate_to: "{{ inventory_hostname }}"
+      become: true
+      file:
+        path: "/mnt/pve/cephfs/{{ container_mount }}"
+        state: directory
+        mode: 0777
+
+
+    ## syncthing setup
+    ##
+    - import_tasks: ../ansible/add-docker.yaml
+
+    - name: create syncthing directory
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      file:
+        path: ~/syncthing
+        state: directory
+
+    - name: create nginx config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: ~/syncthing/docker-compose.yaml
+        content: "{{ lookup('template', 'docker-compose.yaml') }}"
+
+    - name: run syncthing container compose up
+      delegate_to: "{{ container_hostname }}"
+      become: yes
+      shell: |
+        cd ~/syncthing
+        docker compose up -d -y
+
+
+    ## Nginx
+    ##
+    - import_tasks: ../ansible/add-nginx-ubuntu.yaml
+
+    - name: create nginx config
+      delegate_to: "{{ container_hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ container_hostname }}.conf
+        content: "{{ lookup('template', 'nginx.syncthing.conf') }}"
+
+
+    # add certificates and restart nginx
+    #
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        sites: '-d {{ container_hostname }}.{{ domain_name }}'
+        reloadcmd: 'sudo systemctl restart nginx'
+
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ container_hostname }}'
+        host: '{{ container_hostname }}'

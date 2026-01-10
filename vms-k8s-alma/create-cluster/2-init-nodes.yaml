@@ -1,0 +1,86 @@
+## install local software and config nodes
+
+- name: configure vm
+  hosts: 'k8s-nodes'
+  become: yes
+  tasks: 
+        
+    - name: Disable swap for current session
+      command: swapoff -a
+
+    - name: Remove Swap entry from /etc/fstab
+      ansible.builtin.lineinfile:
+        dest: /etc/fstab
+        regexp: swap
+        state: absent
+
+    - name: update ip-tables for containerd
+      ansible.builtin.lineinfile:
+        path: /etc/modules-load.d/k8s.conf 
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - 'overlay'
+        - 'br_netfilter'
+
+    - name: refresh ip drivers
+      ansible.builtin.command: "{{ item }}"
+      with_items: 
+        - rpm -qa | grep kernel-modules-extra
+        - modprobe overlay
+        - modprobe br_netfilter
+
+    - name: Configure sysctl params for Kubernetes.
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.d/99-kubernetes-cri.conf 
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - 'net.bridge.bridge-nf-call-iptables  = 1'
+        - 'net.ipv4.ip_forward                 = 1'
+        - 'net.bridge.bridge-nf-call-ip6tables = 1'
+        # fix too many inotify watches error in grafana alloy
+        # 
+        - 'fs.inotify.max_user_watches = 524288'
+        - 'fs.inotify.max_user_instances = 512'
+
+    - name: Apply sysctl params without reboot
+      command: sysctl --system
+
+    ## Update /etc/hosts with node information
+    ##
+    - name: Get all nodes information
+      set_fact:
+        nodes_info: "{{ groups['k8s-nodes'] | map('extract', hostvars) | list }}"
+
+    - name: Create hosts entries
+      set_fact:
+        hosts_entries: >-
+          {% for node in nodes_info %}
+          {{ node.internal_ip }} {{ node.inventory_hostname }}
+          {% endfor %}
+
+    - name: Display hosts entries to be added
+      debug:
+        var: hosts_entries
+        verbosity: 1
+
+    - name: Add marker lines to /etc/hosts if not present
+      blockinfile:
+        path: /etc/hosts
+        block: |
+          # Kubernetes cluster nodes - managed by Ansible
+          {% for node in nodes_info %}
+          {{ node.internal_ip }} {{ node.inventory_hostname }}
+          {% endfor %}
+        marker: "# {mark} ANSIBLE MANAGED KUBERNETES NODES"
+        state: present
+
+    - name: Add load balancer entry to /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '.*kubernetes.local$'
+        line: "{{ hostvars[groups['control-nodes'][0]].public_ip }} kubernetes.local"
+        state: present
+
+

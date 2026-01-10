@@ -1,0 +1,49 @@
+## The main script to creates a set of vms for k8s cluster
+## node role names are important and should be either 'control' or 'worker'
+## for ansible execution nodes are joined in the groups: control-nodes and worker-nodes respectively, and k8s-nodes for all nodes
+
+
+- name: create vm
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox:
+      node              : "{{ inventory_hostname }}"    
+      password          : "{{ ansible_password }}"
+    vms:
+      template              : 'alma10-template'
+      vlan_id               : 60
+      ip_mask               : '192.168.60.1'
+      mac_mask              : '00:60:00:00:60:'
+      id_mask               : '601'
+      tag                   : 'k8s-node'
+      storage               : 'local-lvm'
+    public_ips:
+      control               : '192.168.60.100'
+      worker                : '192.168.60.200'
+
+    nodes                   : []
+
+    
+  ### Create and configure node vms
+  ###
+  tasks:
+    - name: create vms
+      include_tasks: ./1-create-vm.yaml
+      loop:
+        - { vm_id: '01', target_node: 'prox-n1', vm_role: 'control', vm_disk_size: '20G', vm_cores: 4, vm_memory: 4096 }
+        - { vm_id: '02', target_node: 'prox-n2', vm_role: 'control', vm_disk_size: '20G', vm_cores: 4, vm_memory: 4096 }
+        - { vm_id: '03', target_node: 'prox-n3', vm_role: 'control', vm_disk_size: '20G', vm_cores: 4, vm_memory: 4096 }
+        - { vm_id: '10', target_node: 'prox-n1', vm_role: 'worker', vm_disk_size: '80G', vm_cores: 4, vm_memory: 8192 }
+        - { vm_id: '20', target_node: 'prox-n2', vm_role: 'worker', vm_disk_size: '80G', vm_cores: 4, vm_memory: 8192 }
+        - { vm_id: '30', target_node: 'prox-n3', vm_role: 'worker', vm_disk_size: '80G', vm_cores: 4, vm_memory: 8192 }
+    - name: debug
+      debug:
+        msg: '{{ nodes }}'
+
+    - name: create inventory file from template
+      delegate_to: localhost
+      template:
+        src: inventory-template.j2
+        dest: ../envs/proxmox/generated.inventory.yaml
+

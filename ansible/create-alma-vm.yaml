@@ -27,7 +27,7 @@
         name            : '{{ vm.hostname }}'
         node            : '{{ proxmox.node }}'
       register          : vm_wait_info
-      until             : vm_wait_info.proxmox_vms | length > 0
+      until             : vm_wait_info.proxmox_vms is defined and vm_wait_info.proxmox_vms | length > 0
       retries           : 30
       delay             : 2
 
@@ -59,11 +59,17 @@
 
     - name: configure vm resources
       block:
-        - name: set memory
+        - name: set memory {{ vm.memory }}
           shell: |
             qm set {{ vm.id }} --memory {{ vm.memory }}
           when: vm.memory is defined and vm_info.proxmox_vms[0].config.memory != vm.memory | string
           register: memory_change
+
+        - name: set cpu cores ({{ vm.cores }})
+          shell: |
+            qm set {{ vm.id }} --cores {{ vm.cores }}
+          when: vm.cores is defined and vm_info.proxmox_vms[0].config.cores != vm.cores | string
+          register: cores_change
 
         - name: set onboot
           shell: |
@@ -71,9 +77,24 @@
           when: not(vm_info.proxmox_vms[0].config.onboot is defined) or vm_info.proxmox_vms[0].config.onboot != 1
           register: onboot_change
 
-        - name: configure vm network
+        - name: set hdd size {{ vm.disk_size }}
           shell: |
-            qm set {{ vm.id }} --net0 virtio,macaddr={{ vm.mac }},bridge=vmbr0,tag={{ vm.vlan_id }}
+            qm disk resize {{ vm.id }} scsi0 {{ vm.disk_size }}
+            qm guest exec {{ vm.id }} -- growpart /dev/sda 3
+            qm guest exec {{ vm.id }} -- pvresize /dev/sda3
+            qm guest exec {{ vm.id }} -- lvextend -l +100%FREE /dev/mapper/almalinux-root
+            qm guest exec {{ vm.id }} -- xfs_growfs /
+          when: vm.disk_size is defined and not(vm_info.proxmox_vms[0].config.scsi0 is search('size=' + vm.disk_size))
+          register: disk_change
+
+        - name: set vlan_id string
+          set_fact:
+            vm_vlan_id_str: ",tag={{ vm.vlan_id }}"
+          when: vm.vlan_id is defined and vm.vlan_id != 10
+
+        - name: configure vm network mac = {{ vm.mac }}, vlan = {{ vm_vlan_id_str | default('none') }}
+          shell: |
+            qm set {{ vm.id }} --net0 virtio,macaddr={{ vm.mac }},bridge=vmbr0{{ vm_vlan_id_str | default('') }}
             qm set {{ vm.id }} --nameserver 192.168.{{ vm.vlan_id }}.1
           when: not (vm_info.proxmox_vms[0].config.net0 is search('tag=' + vm.vlan_id | string))
           register: network_change
@@ -82,7 +103,7 @@
           shell: |
             qm set {{ vm.id }} --ipconfig0 ip={{ vm.ip }}/24,gw=192.168.{{ vm.vlan_id }}.1
           when: > 
-            vm.ip is defined and 
+            vm.ip is defined and vm.ip != '' and
             not (
               vm_info.proxmox_vms[0].config.ipconfig0 is defined and 
               vm_info.proxmox_vms[0].config.ipconfig0 is search(vm.ip))
@@ -126,4 +147,5 @@
             network_change is changed or
             ip_change is changed or
             hostname_change is changed or
-            tag_change is changed
+            tag_change is changed or
+            disk_change is changed

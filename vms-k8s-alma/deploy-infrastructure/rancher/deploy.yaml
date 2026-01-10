@@ -1,0 +1,13 @@
+- name: deploy rancher local storage provider
+  block:
+    - name: deploy rancher local-path-storage
+      kubernetes.core.k8s:
+        state: present
+        src: https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+
+    - name: deploy rancher local storage class
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'rancher/01-storageclass.yaml') }}"

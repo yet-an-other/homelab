@@ -1,0 +1,243 @@
+- name: set variables for vm creation
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox:
+      node              : "{{ inventory_hostname }}"    
+      password          : "{{ ansible_password }}"
+    vm:
+      type              : "ubuntu"
+      template          : 'ubuntu2404-template'
+      hostname          : 's3-node'
+      vlan_id           : 10
+      ip                : '192.168.10.212'
+      id                : 10212
+      memory            : 1024
+      cores             : 1
+      disk_size         : '10G'
+      mac               : 'BC:24:12:10:02:12'
+      tag_name          : 'lan'
+      user              : 'ib'
+
+      ceph_mac          : 'BC:24:12:00:02:12'
+      ceph_ip           : '172.16.10.212'
+
+
+  tasks:
+    - name: create and preconfigure ubuntu vm
+      import_tasks: ../ansible/create-vm.yaml
+
+    - name: add "{{ vm.hostname }}" to inventory
+      add_host:
+        name: '{{ vm.hostname }}'
+        ansible_python_interpreter: 'auto_silent'
+        ansible_host: '{{ vm.hostname }}'
+        ansible_user: 'ib'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      changed_when: false
+
+    - name: Wait for VM to start running
+      community.proxmox.proxmox_vm_info:
+        api_host: '{{ proxmox.node }}'
+        api_user: 'root@pam'
+        api_password: '{{ proxmox.password }}'
+        name        : '{{ vm.hostname }}'
+        node        : '{{ proxmox.node }}'
+        config      : current
+      delegate_to: localhost
+      register: uvm_info
+      until: uvm_info is defined and uvm_info.proxmox_vms is defined and uvm_info.proxmox_vms[0].status == "running"
+      retries: 30
+      delay: 1   
+
+    - name: create s3 user on ceph
+      become: yes
+      delegate_to : '{{ inventory_hostname }}'
+      shell: |
+        ceph auth get-or-create client.rgw.s3 \
+          mon 'allow rw' \
+          osd 'allow rwx' \
+          mgr 'allow rw' \
+          -o /etc/ceph/ceph.client.rgw.s3.keyring
+      args:
+        creates: /etc/ceph/ceph.client.rgw.s3.keyring
+
+    - name: Get list of existing pools
+      command: ceph osd pool ls
+      register: existing_pools
+      changed_when: false
+      check_mode: no
+
+    - name: set pool list fact
+      set_fact:
+        rgw_pools:
+          - { name: 'default.rgw.root', pg_num: 8 }
+          - { name: 'default.rgw.control', pg_num: 8 }
+          - { name: 'default.rgw.meta', pg_num: 8 }
+          - { name: 'default.rgw.log', pg_num: 8 }
+          - { name: 'default.rgw.buckets.index', pg_num: 16 }
+          - { name: 'default.rgw.buckets.data', pg_num: 32 }
+
+    - name: Create RGW pools
+      become: yes
+      delegate_to : '{{ inventory_hostname }}'
+      command: >
+        ceph osd pool create {{ item.name }} {{ item.pg_num }} {{ item.pg_num }} replicated rule_ssd
+      loop: "{{ rgw_pools }}"
+      when: item.name not in existing_pools.stdout_lines
+
+    - name: set app for s3 pools
+      become: yes
+      delegate_to : '{{ inventory_hostname }}'
+      shell: |
+        ceph osd pool application enable {{ item.name }} rgw
+      loop: "{{ rgw_pools }}"
+      when: item.name not in existing_pools.stdout_lines
+      failed_when: false 
+
+
+    # Add the second network interface for ceph traffic
+    #
+    - name: configure vm network mac = {{ vm.ceph_mac }}
+      shell: |
+        qm set {{ vm.id }} --net1 virtio,macaddr={{ vm.ceph_mac }},bridge=vnet
+      when: not (vm_info.proxmox_vms[0].config.net1 is defined and vm_info.proxmox_vms[0].config.net1 is search(vm.ceph_mac))
+      register: network2_change
+
+    - name: set ip address for ceph network
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      copy:
+        dest: /etc/netplan/02-cephnet.yaml
+        mode: "0644"
+        content: |
+          network:
+            version: 2
+            ethernets:
+              ens19:
+                dhcp4: no
+                addresses:
+                  - {{ vm.ceph_ip }}/24
+      register: cephnet_config_change
+
+    - name: apply netplan for ceph network
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      shell: |
+        netplan apply
+      when: cephnet_config_change is changed or network2_change is changed
+
+    - name: deploy ceph packages
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      apt:
+        name:
+          - ceph-common
+          - sshpass
+          - radosgw
+        state: present
+        update_cache: yes
+
+    - name: check if ceph config files exist
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      stat:
+        path: "{{ item }}"
+      register: ceph_config_files
+      loop:
+        - /etc/ceph/ceph.client.rgw.s3.keyring
+        - /etc/ceph/ceph.conf
+        - /etc/ceph/ceph.client.admin.keyring
+    - name: copy ceph config file
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      shell: |
+        sshpass -p "{{ ansible_password }}" scp -o "StrictHostKeyChecking no" root@prox-n2:/etc/ceph/ceph.client.rgw.s3.keyring /etc/ceph/
+        sshpass -p "{{ ansible_password }}" scp -o "StrictHostKeyChecking no" root@prox-n2:/etc/ceph/ceph.conf /etc/ceph/
+        sshpass -p "{{ ansible_password }}" scp -o "StrictHostKeyChecking no" root@prox-n1:/etc/ceph/ceph.client.admin.keyring /etc/ceph/
+      when: ceph_config_files.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: set permissions on ceph keyring
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      file: 
+        path: /etc/ceph/ceph.client.rgw.s3.keyring
+        owner: ceph
+        group: ceph
+        mode: "0640"
+
+    - name: check if rgw config already patched
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      shell: grep -q '\[client.rgw.s3\]' /etc/ceph/ceph.conf
+      register: rgw_config_check
+      failed_when: false
+      changed_when: false
+
+    - name: patch ceph config file to add rgw network
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      lineinfile:
+        path: /etc/ceph/ceph.conf
+        line: |
+          [client.rgw.s3]
+              host = {{ vm.hostname }}                                  ; любое имя, просто для логов
+              keyring = /etc/ceph/ceph.client.rgw.s3.keyring
+              rgw_frontends = "beast endpoint=127.0.0.1:7480"
+              rgw_dns_name = s3.bdgn.me                                 ; домен/S3 endpoint
+              rgw_trust_forwarded_https = true
+      when: rgw_config_check.rc != 0
+
+    - name: patch ceph config file to fix keyring path 1
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      lineinfile:
+        path: /etc/ceph/ceph.conf
+        search_string: '/etc/pve/priv/'
+        line: '    keyring = /etc/ceph/$cluster.$name.keyring'
+
+    - name: patch ceph config file to fix keyring path 2
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      lineinfile:
+        path: /etc/ceph/ceph.conf
+        search_string: '/etc/pve/ceph/'
+        line: '    keyring = /etc/ceph/$cluster.$name.keyring' 
+
+    - name: start radosgw service
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      systemd:
+        name: ceph-radosgw@rgw.s3
+        state: started
+        enabled: yes
+
+
+    - import_tasks: ../ansible/add-nginx-ubuntu.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'  
+
+    - name: deploy s3 nginx config
+      delegate_to : '{{ vm.hostname }}'
+      become: yes
+      copy:
+        dest: /etc/nginx/conf.d/s3.conf
+        content: "{{ lookup('template', 's3-nginx.conf') }}"
+        mode: "0644"
+
+    ## ssl certificates
+    ##
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'
+        sites: '-d s3.{{ domain_name }} -d {{ vm.hostname }}.{{ domain_name }}'
+        reloadcmd: "sudo systemctl restart nginx"
+  
+
+    ## As we set mac_addr, the dhcp will assign the container_ip to the vm
+    ##
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ vm.hostname }}'
+        host: '{{ vm.ip }}'
+        user: 'ib'

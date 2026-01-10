@@ -18,6 +18,10 @@
                     {
                         "id": "{{ xray_client_id2 }}",
                         "flow": "xtls-rprx-vision"
+                    },
+                    {
+                        "id": "{{ xray_client_id3 }}",
+                        "flow": "xtls-rprx-vision"
                     }
                 ],
                 "decryption": "none",
@@ -80,7 +84,7 @@
                 "peers": [
                 {
                     "publicKey": "{{ wg_server_public_key }}",
-                    "endpoint": "{{ local_proxy }}:{{ wg_port}}",
+                    "endpoint": "{{ settings.internal_gw }}:{{ wg_port}}",
                     "allowedIPs": ["0.0.0.0/0"]
                 }
                 ]

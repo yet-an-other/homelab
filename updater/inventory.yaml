@@ -1,0 +1,70 @@
+proxmox:
+  hosts:
+    prox-n1:
+      ansible_host: 192.168.10.241
+      node_id: 1
+    prox-n2:
+      ansible_host: 192.168.10.242
+      node_id: 2
+    prox-n3:
+      ansible_host: 192.168.10.243
+      node_id: 3
+
+    lxc-backup:
+      ansible_host: backup
+
+    lxc-immich:
+      ansible_host: immich
+
+    # lxc-homepage:
+    #   ansible_host: homepage
+
+    lxc-ntfy:
+      ansible_host: ntfy
+
+    lxc-omada:
+      ansible_host: omada
+
+    lxc-qbt:
+      ansible_host: qbt
+
+    lxc-speed:
+      ansible_host: speed-test
+    
+    lxc-sponsorblock:
+      ansible_host: sponsor-block
+
+    lxc-sync:
+      ansible_host: sync
+
+    lxc-uptime-kuma:
+      ansible_host: uptime
+
+    vm-front-door:
+      ansible_host: front-door
+      ansible_user: ib
+
+    vm-nginx-vip:
+      ansible_host: nginx-vip
+
+    smb-share:
+      ansible_host: smb-share
+
+    nw-alert:
+      ansible_host: nw-alert
+
+    plex:
+      ansible_host: plex-lxc
+
+    lxc-syncthing:
+      ansible_host: syncthing
+
+    back-door:
+      ansible_host: back-door
+      ansible_user: ib
+
+
+  vars:
+    ansible_python_interpreter: "auto_silent"
+    ansible_ssh_private_key_file: "~/.ssh/ausweis"
+    ansible_user: "root"

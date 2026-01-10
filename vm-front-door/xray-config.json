@@ -18,6 +18,10 @@
                     {
                         "id": "{{ xray_client_id2 }}",
                         "flow": "xtls-rprx-vision"
+                    },
+                    {
+                        "id": "{{ xray_client_id3 }}",
+                        "flow": "xtls-rprx-vision"
                     }
                 ],
                 "decryption": "none",

@@ -1,0 +1,21 @@
+- name: deploy alloy
+  block:
+    - name: deploy helm
+      delegate_to: localhost
+      kubernetes.core.helm:
+        kubeconfig: '{{ kube_config }}'
+        name: alloy
+        chart_ref: grafana/alloy
+        release_namespace: '{{ app_namespace }}'
+        values: "{{ lookup('template', 'alloy/01-values.yaml') | from_yaml }}"
+
+    - name: deploy alloy ingress
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ item }}'
+      loop:
+        - "{{ lookup('template', 'alloy/02-certificate.yaml') }}"
+        - "{{ lookup('template', 'alloy/03-ingress.yaml') }}"
+  vars:
+    app_name: alloy
+    otel_domain_name: "otel.{{ root_domain_name }}"

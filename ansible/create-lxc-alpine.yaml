@@ -1,0 +1,254 @@
+# creates container, starts it, add ssh key, and creates host entry in ansible inventory
+# Inputs:
+# - proxmox_node: the proxmox node to create the container
+# - proxmox_password: the password for the proxmox node
+# - container_hostname: the hostname of the container
+# - container_vmid: the vmid of the container
+# - container_cores: the number of cpu cores for the container
+# - container_memory: the amount of memory for the container
+# - container_disk_size: the size of the disk for the container
+# - container_vlan_id: the vlan id for the container
+# - container_ip: the ip address for the container
+# - container_ssh_file: the ssh public key file to add to the container
+# - domain_name: the domain name for the container
+# - container_mount: the shared folder to mount in the container (optional)
+# - container_host_mount: the shared folder path on the host (optional)
+# - homeroot: the home directory root for the container user (optional)
+
+- name: set homeroot if not defined
+  set_fact:
+    homeroot: "{{ '/root' if container_user == 'root' else '/home/' + container_user }}"
+  when: homeroot is not defined
+
+- name: create and preconfigure container
+  block:
+    - name: set network with ip
+      set_fact: 
+        network: 'name=eth0,gw=192.168.{{ container_vlan_id }}.1,ip={{ container_ip }}/24,bridge=vmbr0,tag={{ container_vlan_id }}'
+        host: '{{ container_ip }}'
+      when: container_ip | length > 0
+
+    - name: set network without ip
+      set_fact: 
+        network: 'name=eth0,ip=dhcp,bridge=vmbr0{% if container_vlan_id != 10 %},tag={{ container_vlan_id }}{% endif %}'
+        host: '{{ container_hostname }}'
+      when: container_ip | length == 0
+
+    - name: set default shared folder
+      set_fact: 
+        mount: '/mnt/pve/cephfs/media/torrent,mp=/mnt/torrent,shared=1'
+      when: container_mount | length == 0
+
+    - name: set container host mount
+      set_fact: 
+        container_host_mount: "{{ container_mount }}"
+      when: container_host_mount | length == 0
+
+    - name: set host mount directory (remove tailing slash for root)
+      set_fact:
+        host_mount: "/mnt/pve/cephfs/{{ container_host_mount if container_host_mount != '/' else '' }}"
+      changed_when: false
+      
+    - name: create mount directory
+      delegate_to: "{{ proxmox_node }}"
+      become: true
+      file:
+        path: "{{ host_mount }}"
+        state: directory
+        mode: 0755
+      when: container_mount | length > 0      
+
+    - name: set shared folder
+      set_fact: 
+        mount: '{{ host_mount }},mp=/mnt/{{ container_mount }},shared=1'
+      when: container_mount | length > 0 
+
+    - name: get container info
+      community.proxmox.proxmox_vm_info:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        vmid            : '{{ container_vmid }}'
+      delegate_to       : localhost
+      register          : container_info0
+
+    - name: create container
+      community.general.proxmox:
+        node            : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        password        : '{{ proxmox_password }}'
+        hostname        : '{{ container_hostname }}'
+        vmid            : '{{ container_vmid }}'
+        ostemplate      : 'cephfs:vztmpl/alpine-3.22-default_20250617_amd64.tar.xz'
+        cores           : '{{ container_cores }}'
+        memory          : '{{ container_memory }}'
+        swap            : 0
+        onboot          : 1
+        unprivileged    : 1
+        disk_volume:
+          storage       : vm-data
+          size          : '{{ container_disk_size }}'
+        netif:
+          net0          : '{{ network }}'
+        nameserver      : '192.168.{{ container_vlan_id }}.1'
+        searchdomain    : '{{ domain_name }}'
+        mounts:
+          mp0           : '{{ mount }}'
+        features:
+          - nesting={{ container_nesting | default(0) }}
+      delegate_to       : localhost
+      register          : container
+      when: container_info0.proxmox_vms | length == 0
+
+    - name: set container tag based on vlan
+      set_fact:
+        container_tag: "{{ {'10': 'lan', '20': 'dmz', '30': 'iot', '40': 'vip', '50': 'gst'}[container_vlan_id | string] | default('lan') }}"
+
+    - name: get container info
+      community.proxmox.proxmox_vm_info:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        vmid            : '{{ container_vmid }}'
+      delegate_to       : localhost
+      register          : container_info1
+
+    - debug:
+        msg: "{{ container_info1 }}"
+
+    - name: tag container with {{ container_tag }}
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: pct set {{ container_vmid }} --tags {{ container_tag }}
+      when: container_tag is defined and (container_info1.proxmox_vms[0].tags is not defined or container_info1.proxmox_vms[0].tags != container_tag)
+
+    - name: start container
+#      ignore_errors     : true
+      community.general.proxmox:
+        api_host        : '{{ proxmox_node }}'
+        api_user        : 'root@pam'
+        api_password    : '{{ proxmox_password }}'
+        vmid            : '{{ container_vmid }}'
+        state           : started
+      delegate_to       : localhost
+      when: container_info1.proxmox_vms[0].status != 'running'
+
+    - name: wait for container to be fully started and responsive
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: |
+          pct status {{ container_vmid }} | grep -q "status: running" && \
+          pct exec {{ container_vmid }} -- test -d /root
+      register: container_ready
+      until: container_ready.rc == 0
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: check if ssh key already exists
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: |
+          pct exec {{ container_vmid }} -- test -f {{ homeroot }}/.ssh/authorized_keys && \
+          pct exec {{ container_vmid }} -- grep -qF '{{ lookup('file', container_ssh_file) }}' {{ homeroot }}/.ssh/authorized_keys
+      register: ssh_key_exists
+      failed_when: false
+      changed_when: false
+
+    - name: add .ssh key at {{ homeroot }}/.ssh
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: |
+          pct exec {{ container_vmid }} -- mkdir -p {{ homeroot }}/.ssh
+          pct exec {{ container_vmid }} -- chmod 700 {{ homeroot }}/.ssh
+          pct exec {{ container_vmid }} -- chown root:root {{ homeroot }}/.ssh
+          pct exec {{ container_vmid }} -- sh -c 'echo {{ lookup('file', container_ssh_file) }} > {{ homeroot }}/.ssh/authorized_keys'
+          pct exec {{ container_vmid }} -- chmod 600 {{ homeroot }}/.ssh/authorized_keys
+      when: ssh_key_exists.rc != 0
+
+    - name: install sshd and start service
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: |
+          pct exec {{ container_vmid }} -- apk add  --update --no-cache openssh
+          pct exec {{ container_vmid }} -- rc-update add sshd
+          pct exec {{ container_vmid }} -- rc-service sshd start
+      changed_when: false
+
+    - name: install python3 for ansible
+      delegate_to: "{{ proxmox_node }}"
+      ansible.builtin.shell:
+        cmd: pct exec {{ container_vmid }} -- apk add --update --no-cache python3
+      changed_when: false
+
+    - name: create host container={{ container_hostname }} host={{ host }} with user={{ container_user }}
+      add_host:
+        name: '{{ container_hostname }}'
+        ansible_host: '{{ host }}.{{ domain_name }}'
+        ansible_user: '{{ container_user }}'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      changed_when: false
+
+    - name: update system
+      delegate_to: '{{ container_hostname }}'
+      become: yes
+      apk:
+        update_cache: yes
+        upgrade: yes
+
+
+    - name: install packages
+      delegate_to: '{{ container_hostname }}'
+      become: true
+      ansible.builtin.apk:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - bash
+        - bash-completion
+        - neovim
+        - curl
+        - eza
+        - git
+        - btop
+        - rsync
+    
+
+- name: install oh-my-bash
+  delegate_to: '{{ container_hostname }}'
+  become: true
+  ansible.builtin.shell:
+    cmd: |
+      bash -c "$(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh)" "" --unattended
+      sed -i 's/THEME_SHOW_CLOCK=${THEME_SHOW_CLOCK:-"true"}/THEME_SHOW_CLOCK=${THEME_SHOW_CLOCK:-"false"}/g' ~/.oh-my-bash/themes/font/font.theme.sh
+      echo " " >> ~/.bashrc
+      echo "# eza aliases" >> ~/.bashrc
+      echo "alias l=\"eza -lah --group-directories-first --icons=auto\"" >> ~/.bashrc
+      echo "alias lt=\"eza -a --tree --level=2 --long --icons --git --group-directories-first\"" >> ~/.bashrc
+      echo "alias sl=\"sudo eza -lah --group-directories-first --icons=auto\"" >> ~/.bashrc
+      echo "alias slt=\"sudo eza -a --tree --level=2 --long --icons --git --group-directories-first\"" >> ~/.bashrc
+      echo " " >> ~/.bashrc
+      echo "# directory aliases" >> ~/.bashrc
+      echo "alias ..=\"cd ..\"" >> ~/.bashrc
+      echo "alias ...=\"cd ../..\"" >> ~/.bashrc
+      echo "alias ....=\"cd ../../..\"" >> ~/.bashrc
+  args:
+    creates: ~/.oh-my-bash
+
+
+- name: check current default shell
+  delegate_to: '{{ container_hostname }}'
+  become: true
+  ansible.builtin.shell:
+    cmd: "getent passwd {{ container_user }} | cut -d: -f7"
+  register: current_shell
+  changed_when: false
+
+- name: make sure bash is the default shell
+  delegate_to: '{{ container_hostname }}'
+  become: true
+  ansible.builtin.shell:
+    cmd: sed -i 's|^\({{ container_user }}:.*:\).*$|\1/bin/bash|' /etc/passwd
+  when: current_shell.stdout != '/bin/bash'

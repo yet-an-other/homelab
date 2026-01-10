@@ -17,7 +17,7 @@ sudo dnf update -y
 
 # install basic tools
 #
-sudo dnf install -y qemu-guest-agent neovim git btop unzip zip jq policycoreutils-python-utils tar openssl
+sudo dnf install -y qemu-guest-agent neovim git btop unzip zip jq policycoreutils-python-utils tar openssl cloud-utils-growpart
 
 # allow qemu guest agent execute permissions
 #

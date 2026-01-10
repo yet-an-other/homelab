@@ -1,0 +1,25 @@
+[Unit]
+Description=Resilio Sync service
+Documentation=https://help.resilio.com
+After=network.target network-online.target
+
+[Service]
+Type=forking
+UMask=0002
+Restart=on-failure
+PermissionsStartOnly=true
+
+RuntimeDirectory=rslsync
+RuntimeDirectoryMode=0777
+PIDFile=/run/rslsync/rslsync.pid
+
+User=rslsync
+Group=rslsync
+Environment="SYNC_USER=rslsync"
+Environment="SYNC_GROUP=rslsync"
+
+ExecStart=/usr/bin/rslsync --config /etc/resilio-sync/config.json
+ExecStartPost=/bin/sleep 1
+
+[Install]
+WantedBy=default.target

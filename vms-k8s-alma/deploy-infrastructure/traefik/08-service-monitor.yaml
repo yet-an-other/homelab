@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    {{ prometheus_label | indent(4) }}
+  name: {{ traefik_app_name }}
+  namespace: {{ traefik_namespace }}
+spec:
+  endpoints:
+    - port: metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_endpoint_node_name]
+          targetLabel: node
+          replacement: ${1}
+        - sourceLabels: [__meta_kubernetes_pod_host_ip]
+          targetLabel: host_ip
+          replacement: ${1}    
+  namespaceSelector:
+    matchNames:
+      - {{ traefik_namespace }}
+  selector:
+    matchLabels:
+      {{ selectors | indent(6) }}

@@ -1,0 +1,41 @@
+# install containerd
+#
+- hosts: 'all'
+  become: yes
+  tasks: 
+
+    - name: install containerd
+      ansible.builtin.command: "{{ item }}"
+      vars:
+        containerd_version: 2.2.0
+        runsc_version: 1.3.3
+      with_items: 
+        - curl -L https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz -o /tmp/containerd.tar.gz
+        - tar Czxvf /usr/local /tmp/containerd.tar.gz
+        - curl -L https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o containerd.service
+        - mv containerd.service /usr/lib/systemd/system/
+        - curl -L https://github.com/opencontainers/runc/releases/download/v{{ runsc_version }}/runc.amd64 -o runc.amd64
+        - install -m 755 runc.amd64 /usr/local/sbin/runc
+        - rm /tmp/containerd.tar.gz runc.amd64
+      args:
+        creates: /usr/local/sbin/runc
+        
+    - name: Create containerd config folder
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+
+    - name: Configure containerd
+      shell: "/usr/local/bin/containerd config default > /etc/containerd/config.toml"
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Configure containerd - fix CGroup
+      shell: "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml"
+
+    - name: Enable containerd service, and start it
+      ansible.builtin.systemd: 
+        name: containerd
+        state: restarted
+        enabled: yes
+        daemon-reload: yes  

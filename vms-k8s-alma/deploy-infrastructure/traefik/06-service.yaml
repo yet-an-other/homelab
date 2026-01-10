@@ -1,0 +1,40 @@
+## Service for public access
+##
+apiVersion: v1
+kind: Service
+metadata:
+  name: '{{ app_name }}-public'
+  namespace: '{{ app_namespace }}'
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: web
+      nodePort: 30080
+    - name: https
+      port: 443
+      targetPort: websecure
+      nodePort: 30443
+  selector:
+    {{ selectors | indent(4) }}
+
+---
+
+## Service for internal access
+##
+apiVersion: v1
+kind: Service
+metadata:
+  name: '{{ app_name }}-private'
+  namespace: '{{ app_namespace }}'
+  labels:
+    {{ labels | indent(4) }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      targetPort: metrics
+      port: 8081
+  selector:
+    {{ selectors | indent(4) }}

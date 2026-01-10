@@ -2,16 +2,16 @@
   become: yes
   delegate_to: "{{ container_hostname }}"
   block:
-    - name: install required packages
-      apt:
-        name        : "{{ item }}"
-        state       : present
-      with_items:
-        - curl
-        - ca-certificates
-        - gnupg2
-        - lsb-release
-        - ubuntu-keyring
+    # - name: install required packages
+    #   apt:
+    #     name        : "{{ item }}"
+    #     state       : present
+    #   with_items:
+    #     - curl
+    #     - ca-certificates
+    #     - gnupg2
+    #     - lsb-release
+    #     - ubuntu-keyring
 
     - name: add nginx repo
       shell: |

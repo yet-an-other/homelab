@@ -1,0 +1,121 @@
+- name: deploy infrastructure
+  hosts: 'control-nodes[0]'
+  gather_facts: false
+  become: false
+
+  vars:
+    prometheus_label: 'release: prometheus'
+    monitoring_namespace: monitoring
+    traefik_app_name: 'traefik'
+    traefik_namespace: 'traefik'
+    rancher_storage_class_name: 'local-path'
+    longhorn_storage_class_name: 'local-longhorn'
+    minio_storage_class_name: '{{ longhorn_storage_class_name }}'
+    pg_storage_class_name: '{{ longhorn_storage_class_name }}'
+    auth_namespace: auth
+    s3_endpoint: '{{ "minio.minio" if env != "proxmox" else "s3.bdgn.me" }}' 
+    pgi_secret_name: pgi-secret
+
+  tasks:
+
+    ## add helm repos
+    ##
+    - name: Add helm repos
+      delegate_to: localhost
+      kubernetes.core.helm_repository:
+        name: '{{ item.repo_name }}'
+        repo_url: '{{ item.repo_url }}'
+      loop:
+        - { repo_name: 'prometheus-community', repo_url: 'https://prometheus-community.github.io/helm-charts' }
+        - { repo_name: 'grafana', repo_url: 'https://grafana.github.io/helm-charts' }
+        - { repo_name: 'zitadel', repo_url: 'https://charts.zitadel.com' }
+
+
+    ## deploy prometheus crds
+    ##
+    - include_tasks: prometheus/deploy-crd.yaml
+      when: only_deploy is not defined or only_deploy == 'prometheus-crd'
+
+    ## install cert-manager
+    ##
+    - include_tasks: cert-manager/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'cert-manager'
+
+        
+    ## install traefik
+    ##
+    - include_tasks: traefik/deploy.yaml
+      vars:
+        app_name: '{{ traefik_app_name }}'
+        app_namespace: '{{ traefik_namespace }}'
+        app_version: v3.6
+      when: only_deploy is not defined or only_deploy == 'traefik'
+
+
+    ## install longhorn storage provider for distributed storage
+    ##
+    - include_tasks: longhorn/deploy.yaml       
+      vars:
+        app_version: v1.10.1
+      when: only_deploy is not defined or only_deploy == 'longhorn'
+
+    # install rancher storage provider for distributed storage
+    #
+    - include_tasks: rancher/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'rancher'    
+
+    ## install postgresql cluster
+    ##
+    - include_tasks: postgres/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'postgres'
+
+    ## deploy zitadel
+    ##
+    - include_tasks: zitadel/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'zitadel'
+
+
+    ## deploy oauth2-proxy
+    ##
+    - include_tasks: oauth2proxy/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'oauth2proxy'
+
+    ## install minio
+    ##
+    - include_tasks: minio/deploy.yaml
+      when: env != 'proxmox' and (only_deploy is not defined or only_deploy == 'minio')
+
+    ## install monitoring stack
+    ##
+    - name: deploy monitoring stack
+      block:
+        - include_tasks: loki/deploy.yaml
+
+        - include_tasks: tempo/deploy.yaml
+
+        - include_tasks: prometheus/deploy.yaml
+
+        - include_tasks: alloy/deploy.yaml        
+      vars:
+        app_namespace: '{{ monitoring_namespace }}'
+        loki_endpoint: 'loki-gateway.{{ monitoring_namespace }}'
+        tempo_endpoint: 'tempo.{{ monitoring_namespace }}'
+        prometheus_endpoint: 'prometheus-kube-prometheus-prometheus.{{ monitoring_namespace }}'
+        alertmanager_endpoint: 'alertmanager-operated.{{ monitoring_namespace }}'
+      when: only_deploy is not defined or only_deploy == 'monitoring'        
+
+    ## install kafka cluster
+    ##
+    - include_tasks: kafka/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'kafka'
+
+    ## deploy argocd
+    ##
+    - include_tasks: argocd/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'argocd'      
+
+    ## deploy homepage
+    ##
+    - include_tasks: homepage/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'homepage'
+

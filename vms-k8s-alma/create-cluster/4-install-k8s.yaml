@@ -1,0 +1,50 @@
+  - hosts: 'all'
+    become: yes
+    tasks:    
+  
+      - name: Add Kubernetes repository
+        copy:
+          dest: /etc/yum.repos.d/kubernetes.repo
+          content: |
+            [kubernetes]
+            name=Kubernetes
+            baseurl=https://pkgs.k8s.io/core:/stable:/v1.34/rpm/
+            enabled=1
+            gpgcheck=1
+            gpgkey=https://pkgs.k8s.io/core:/stable:/v1.34/rpm/repodata/repomd.xml.key
+
+      - name: Installing Kubernetes Cluster Packages.
+        ansible.builtin.dnf: 
+          name:
+            - kubeadm 
+            - kubectl 
+            - kubelet 
+          state: present
+          allow_downgrade: true
+
+      - name: Enable service kubelet, and enable persistently
+        ansible.builtin.service: 
+          name: kubelet
+          enabled: yes
+
+      - name: Create directory for kube config.
+        ansible.builtin.file: 
+          path: ~/.kube
+          state: directory
+          mode: 0755
+
+      - name: add --node-ip flag to kubelet
+        ansible.builtin.lineinfile:
+          path: /etc/default/kubelet
+          line: KUBELET_EXTRA_ARGS=--node-ip={{ internal_ip }}
+          state: present
+          create: yes
+
+      - name: Restart systemd
+        ansible.builtin.command: systemctl daemon-reload
+
+      - name: Restart kubelet
+        ansible.builtin.service:
+          name: kubelet
+          state: restarted
+          enabled: yes

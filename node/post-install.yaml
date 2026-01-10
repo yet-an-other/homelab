@@ -1,0 +1,47 @@
+- name: install utilities
+  hosts: all
+  become: yes
+
+  gather_facts: true
+
+  tasks:
+    - name: install additional packages
+      apt:
+        name:
+          - rsync
+          - wget
+          - curl
+          - neovim
+          - git
+          - unzip 
+          - zip 
+          - jq
+          - eza 
+        state: present
+
+    - name: set neovim as default editor
+      lineinfile:
+        path: ~/.bashrc
+        line: 'export EDITOR="nvim"'
+        create: yes
+
+    - name: install oh-my-bash
+      become: true
+      ansible.builtin.shell:
+        cmd: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh)" "" --unattended
+          echo " " >> ~/.bashrc
+          echo "THEME_SHOW_CLOCK=false" >> ~/.bashrc
+          echo " " >> ~/.bashrc
+          echo "# eza aliases" >> ~/.bashrc
+          echo "alias l=\"eza -lah --group-directories-first --icons=auto\"" >> ~/.bashrc
+          echo "alias lt=\"eza -a --tree --level=2 --long --icons --git --group-directories-first\"" >> ~/.bashrc
+          echo "alias sl=\"sudo eza -lah --group-directories-first --icons=auto\"" >> ~/.bashrc
+          echo "alias slt=\"sudo eza -a --tree --level=2 --long --icons --git --group-directories-first\"" >> ~/.bashrc
+          echo " " >> ~/.bashrc
+          echo "# directory aliases" >> ~/.bashrc
+          echo "alias ..=\"cd ..\"" >> ~/.bashrc
+          echo "alias ...=\"cd ../..\"" >> ~/.bashrc
+          echo "alias ....=\"cd ../../..\"" >> ~/.bashrc
+      args:
+        creates: ~/.oh-my-bash

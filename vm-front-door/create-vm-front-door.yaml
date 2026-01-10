@@ -7,6 +7,7 @@
       node              : "{{ inventory_hostname }}"    
       password          : "{{ ansible_password }}"
     vm:
+      type              : "alma"
       template          : 'alma10-template'
       hostname          : 'front-door'
       vlan_id           : 20
@@ -19,11 +20,11 @@
       tag_name          : 'dmz'
     settings:
       internal_gw       : '192.168.40.204' # nginx-vip, the ip address of the internal gateway
-      fallback_host     : 'speedtest'
+      fallback_host     : 'speed-test'
 
   tasks:
     - name: create and preconfigure alma vm
-      import_tasks: ../ansible/create-alma-vm.yaml
+      import_tasks: ../ansible/create-vm.yaml
 
     - name: add "{{ vm.hostname }}" to inventory
       add_host:
@@ -51,6 +52,7 @@
     - name: add nginx to alma vm
       import_tasks: ../ansible/add-nginx-alma.yaml
       vars:
+        hostname: '{{ vm.hostname }}'
         fw_ports:
           - { port: 443, proto: tcp }
           - { port: 13779, proto: tcp }
@@ -99,14 +101,16 @@
       become: yes
       copy:
         dest: /etc/systemd/system/xray.service
-        content: "{{ lookup('template', 'xray.service') }}"     
+        content: "{{ lookup('template', 'xray.service') }}"
+        force: no     
 
     - name: update xray config
       delegate_to: "{{ vm.hostname }}"
       become: yes
       copy:
         dest: /opt/xray/config.json
-        content: "{{ lookup('template', 'xray-config.json') }}" 
+        content: "{{ lookup('template', 'xray-config.json') }}"
+        force: yes 
 
     - name: enable xray, start after certs are in place
       delegate_to: "{{ vm.hostname }}"
@@ -129,8 +133,7 @@
     ##
     - import_tasks: ../ansible/add-local-ssh-config.yaml
       vars:
+        user: 'ib'
         hostname: '{{ vm.hostname }}'
         host: '{{ vm.ip }}'          
          
-
-
