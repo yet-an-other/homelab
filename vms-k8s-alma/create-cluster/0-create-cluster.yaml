@@ -119,3 +119,6 @@
 ### create workers
 ###
 - import_playbook: 7-join-worker-nodes.yaml
+
+# - import_playbook: tune-etcd-for-slow-disk.yaml
+

@@ -2,6 +2,9 @@ loki:
   auth_enabled  : false 
   commonConfig:
     replication_factor: 1
+    ring:
+        kvstore:
+          store: inmemory
   schemaConfig:
     configs:
       - from: "2025-04-01"
@@ -52,8 +55,16 @@ loki:
         admin: 'loki'
     s3:
       # s3 URL can be used to specify the endpoint, access key, secret key, and bucket name this works well for S3 compatible storages or are hosting Loki on-premises and want to use S3 as the storage backend. Either use the s3 URL or the individual fields below (AWS endpoint, region, secret).
-      s3: s3://{{ s3_key_id }}:{{ s3_secret }}@{{ s3_endpoint }}
+      #s3: s3://{{ s3_key_id }}:{{ s3_secret }}@{{ s3_endpoint }}
 
+      endpoint: '{{ s3_endpoint }}'
+      # AWS region where the S3 bucket is located
+      region: us-east-1
+      # AWS secret access key
+      secretAccessKey: '{{ s3_secret }}'
+      # AWS access key ID
+      accessKeyId: '{{ s3_key_id }}'
+      
       # Forces the path style for S3 (true/false)
       s3ForcePathStyle: true
 

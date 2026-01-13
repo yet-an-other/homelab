@@ -1,0 +1,39 @@
+# Install Helm on control plane nodes
+#
+# Params:
+#   helm_version: 3.17.0
+
+- name: Check if Helm is already installed
+  command: which helm
+  register: helm_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Install Helm
+  become: yes
+  when: helm_check.rc != 0
+  block:
+    - name: Download Helm installation script
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0700'
+
+    - name: Run Helm installation script
+      ansible.builtin.command: /tmp/get_helm.sh
+      environment:
+        DESIRED_VERSION: "v{{ helm_version }}"
+
+    - name: Remove installation script
+      ansible.builtin.file:
+        path: /tmp/get_helm.sh
+        state: absent
+
+- name: Verify Helm installation
+  command: helm version --short
+  register: helm_version_output
+  changed_when: false
+
+- name: Display Helm version
+  debug:
+    var: helm_version_output.stdout

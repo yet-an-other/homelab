@@ -52,6 +52,9 @@ data:
             description: Longhorn
             icon: longhorn
 
+
+{%- if cluster_env != "proxmox" %}
+
         - Minio:
             href: https://{{ main_domain_name }}/minio/
             description: Minio
@@ -60,6 +63,8 @@ data:
               type: iframe
               src: https://{{ main_domain_name }}/grafana/d-solo/delzqomdvbhfke/homepage-widgets?orgId=1&timezone=browser&kiosk=true&panelId=2&__feature.dashboardSceneSolo
               classes: h-30 sm:h-30 md:h-30 lg:h-30 xl:h-30 2xl:h-36
+              
+{%- endif %}
 
         - ArgoCD:
             href: https://{{ main_domain_name }}/argocd
@@ -68,7 +73,7 @@ data:
             widget:
               type: argocd
               url: http://argocd-server.argocd.svc.cluster.local/argocd
-              key: <plkaceholder-for-argo-cd-key generate it in the argocd app>
+              key: '{{ argocd_key }}'
 
   widgets.yaml: |
     - kubernetes:

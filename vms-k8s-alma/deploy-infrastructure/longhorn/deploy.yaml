@@ -12,6 +12,7 @@
       loop:
         - "{{ lookup('template', 'longhorn/00-storage-class-local.yaml') }}"
         - "{{ lookup('template', 'longhorn/01-storage-class-spread.yaml') }}"
+        - "{{ lookup('template', 'longhorn/03-service-monitor.yaml') }}"
 #        - "{{ lookup('template', 'longhorn/02-ingress.yaml') }}"        
   vars:
     zitadel_middleware: ""

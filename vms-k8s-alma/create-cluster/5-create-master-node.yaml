@@ -2,7 +2,14 @@
   hosts: '{{ master_node }}'
   become: true
   gather_facts: true
+  vars:
+    pod_network_cidr: '10.244.0.0/16'
   tasks:
+
+    ## master node prep
+    ##
+    - name: Install Helm for CNI deployment
+      import_tasks: libs/0-install-helm.yaml
 
     ## Init Cluster
     ##
@@ -36,11 +43,12 @@
         --control-plane-endpoint={{ public_ip }}:6443 \
         --apiserver-bind-port=6446 \
         --apiserver-advertise-address={{ internal_ip }} \
-        --pod-network-cidr=10.244.0.0/16 \
+        --pod-network-cidr={{ pod_network_cidr }} \
         --cri-socket=unix:///run/containerd/containerd.sock \
         --apiserver-cert-extra-sans={{ cert_extra_sans }} \
         --certificate-key={{ certificate_key.stdout }} \
-        --upload-certs
+        --upload-certs \
+        --skip-phases=addon/kube-proxy
       args:
         creates: /etc/kubernetes/manifests/kube-apiserver.yaml
 
@@ -72,13 +80,13 @@
 
     - name: get host name
       shell: "hostname"
-      register: host_name 
+      register: host_name
 
-    ## install kube network
-    ##
-    - name: Create Pod Network & RBAC.
-      ansible.builtin.command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml 
+    - name: install prometheus crds
+      import_tasks: libs/1-install-prometheus-crd.yaml
+
+    - name: Install Cilium CNI
+      import_tasks: libs/2-install-cilium.yaml
 
     - name: Get the token for joining the nodes with Kuberentes master.
       shell: "kubeadm token create"

@@ -33,8 +33,9 @@
 
     ## deploy prometheus crds
     ##
-    - include_tasks: prometheus/deploy-crd.yaml
-      when: only_deploy is not defined or only_deploy == 'prometheus-crd'
+    ## should be created on the cluster stage for the cilium deploy
+    # - include_tasks: prometheus/deploy-crd.yaml
+    #   when: only_deploy is not defined or only_deploy == 'prometheus-crd'
 
     ## install cert-manager
     ##
@@ -57,6 +58,7 @@
     - include_tasks: longhorn/deploy.yaml       
       vars:
         app_version: v1.10.1
+        app_namespace: 'longhorn-system'
       when: only_deploy is not defined or only_deploy == 'longhorn'
 
     # install rancher storage provider for distributed storage

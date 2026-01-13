@@ -1,0 +1,21 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hubble-ui
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: hubble-ui
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`hubble.{{ main_domain_name }}`)
+      kind: Rule
+      services:
+        - name: hubble-ui
+          port: 80
+      middlewares:
+        - name: oauth2proxy-auth
+          namespace: auth
+  tls:
+    secretName: wildcard-tls-secret

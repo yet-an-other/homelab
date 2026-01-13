@@ -1,0 +1,30 @@
+# ServiceMonitors are automatically created by Cilium Helm chart
+# This file documents the expected ServiceMonitors for reference
+
+# The following ServiceMonitors are created with label "release: prometheus"
+# to match the kube-prometheus-stack selector:
+#
+# 1. hubble-metrics (namespace: kube-system)
+#    - Metrics endpoint: hubble-metrics:9965
+#    - Labels: k8s-app=hubble, release=prometheus
+#    - Metrics: DNS queries, drops, TCP, flows, ICMP, HTTP
+#
+# 2. cilium-agent (namespace: kube-system)
+#    - Metrics endpoint: cilium-agent:9962
+#    - Labels: k8s-app=cilium, release=prometheus
+#    - Metrics: Agent metrics, datapath, eBPF maps
+#
+# 3. cilium-operator (namespace: kube-system)
+#    - Metrics endpoint: cilium-operator:9963
+#    - Labels: app.kubernetes.io/name=cilium-operator, release=prometheus
+#    - Metrics: Operator metrics, IPAM, node management
+#
+# To verify ServiceMonitors are created:
+#   kubectl get servicemonitor -n kube-system -l k8s-app=cilium
+#   kubectl get servicemonitor -n kube-system -l k8s-app=hubble
+#   kubectl get servicemonitor -n kube-system -l app.kubernetes.io/name=cilium-operator
+#
+# Grafana Dashboards (import from grafana.com):
+#   - Dashboard 16611: Cilium Metrics
+#   - Dashboard 16612: Cilium Operator
+#   - Dashboard 16613: Hubble

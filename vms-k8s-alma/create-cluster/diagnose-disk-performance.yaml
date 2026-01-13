@@ -1,0 +1,112 @@
+---
+- name: Diagnose Disk Performance for etcd
+  hosts: control-nodes[0]
+  become: true
+  gather_facts: true
+  tasks:
+
+    - name: Display VM information
+      debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Architecture: {{ ansible_architecture }}"
+
+    - name: Check available disk space
+      shell: df -h /var/lib/etcd 2>/dev/null || df -h /
+      register: disk_space
+
+    - name: Display disk space
+      debug:
+        msg: "{{ disk_space.stdout_lines }}"
+
+    - name: Check I/O scheduler
+      shell: cat /sys/block/$(lsblk -no PKNAME $(df /var/lib/etcd 2>/dev/null | tail -1 | awk '{print $1}' || df / | tail -1 | awk '{print $1}'))/queue/scheduler
+      register: io_scheduler
+      failed_when: false
+
+    - name: Display I/O scheduler
+      debug:
+        msg: "Current I/O scheduler: {{ io_scheduler.stdout }}"
+      when: io_scheduler.rc == 0
+
+    - name: Check current I/O stats
+      shell: iostat -x 1 3
+      register: iostat_output
+      failed_when: false
+
+    - name: Display I/O stats
+      debug:
+        msg: "{{ iostat_output.stdout_lines }}"
+      when: iostat_output.rc == 0
+
+    - name: Install fio if not present
+      package:
+        name: fio
+        state: present
+
+    - name: Run quick disk performance test (this will take ~60 seconds)
+      shell: |
+        fio --name=etcd-test \
+          --filename=/tmp/fio-test \
+          --ioengine=sync \
+          --rw=write \
+          --bs=2300 \
+          --size=500M \
+          --numjobs=1 \
+          --time_based \
+          --runtime=10s \
+          --fsync=1 \
+          --output-format=normal
+      register: fio_test
+      args:
+        creates: /tmp/fio-test-done
+
+    - name: Display fio test results
+      debug:
+        msg: "{{ fio_test.stdout_lines }}"
+
+    - name: Clean up fio test file
+      file:
+        path: /tmp/fio-test
+        state: absent
+
+    - name: Check etcd data directory size
+      shell: du -sh /var/lib/etcd
+      register: etcd_size
+      failed_when: false
+
+    - name: Display etcd data size
+      debug:
+        msg: "etcd data directory size: {{ etcd_size.stdout }}"
+      when: etcd_size.rc == 0
+
+    - name: Check VM disk type (if running on Proxmox)
+      shell: lsblk -d -o NAME,ROTA,DISC-GRAN,DISC-MAX
+      register: disk_type
+
+    - name: Display disk type information
+      debug:
+        msg: "{{ disk_type.stdout_lines }}"
+
+    - name: Performance Recommendations
+      debug:
+        msg:
+          - "============================================"
+          - "ETCD PERFORMANCE REQUIREMENTS:"
+          - "============================================"
+          - "Minimum: 50 sequential IOPS (7200 RPM disk)"
+          - "Recommended: 500+ sequential IOPS (SSD)"
+          - "Production: 3000+ IOPS"
+          - ""
+          - "If fio test shows <50 IOPS, etcd will have severe issues"
+          - "If showing <500 IOPS, expect warnings and slow performance"
+          - ""
+          - "Common fixes for Proxmox VMs:"
+          - "1. Use SSD storage instead of HDD"
+          - "2. Change disk controller to VirtIO SCSI (not IDE)"
+          - "3. Enable 'Discard' and 'SSD emulation' in VM disk settings"
+          - "4. Set cache mode to 'writethrough' or 'writeback'"
+          - "5. Move etcd to dedicated fast disk"
+          - "============================================"

@@ -52,6 +52,12 @@
       when: only_deploy is not defined or only_deploy == 'traefik'
 
 
+    ## Deploy Hubble UI Ingress
+    ##
+    - include_tasks: cilium-hubble/deploy.yaml
+      when: only_deploy is not defined or only_deploy == 'cilium-hubble'
+
+
     ## install longhorn storage provider for distributed storage
     ##
     - include_tasks: longhorn/deploy.yaml       

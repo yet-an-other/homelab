@@ -1,0 +1,53 @@
+---
+- name: Tune etcd for slower disk performance
+  hosts: control-nodes
+  become: true
+  tasks:
+
+    - name: Check if etcd pod exists
+      shell: kubectl get pod -n kube-system -l component=etcd --no-headers 2>/dev/null | wc -l
+      register: etcd_exists
+      failed_when: false
+
+    - name: Backup original etcd manifest
+      copy:
+        src: /etc/kubernetes/manifests/etcd.yaml
+        dest: /etc/kubernetes/manifests/etcd.yaml.backup
+        remote_src: yes
+      when: etcd_exists.stdout | int > 0
+
+    - name: Add etcd tuning parameters for slow disk
+      blockinfile:
+        path: /etc/kubernetes/manifests/etcd.yaml
+        marker: "    # {mark} ANSIBLE MANAGED - etcd slow disk tuning"
+        insertafter: "^    - kube-apiserver"
+        block: |
+              - --heartbeat-interval=200
+              - --election-timeout=2000
+              - --snapshot-count=5000
+              - --quota-backend-bytes=8589934592
+              - --max-snapshots=3
+              - --max-wals=3
+      when: etcd_exists.stdout | int > 0
+
+    - name: Wait for etcd to restart (takes ~30 seconds)
+      pause:
+        seconds: 30
+      when: etcd_exists.stdout | int > 0
+
+    - name: Verify etcd is running
+      shell: kubectl get pod -n kube-system -l component=etcd -o jsonpath='{.items[0].status.phase}'
+      register: etcd_status
+      retries: 10
+      delay: 5
+      until: etcd_status.stdout == "Running"
+      when: etcd_exists.stdout | int > 0
+
+    - name: Display tuning applied
+      debug:
+        msg:
+          - "etcd has been tuned for slower disk:"
+          - "  - Heartbeat interval: 200ms (was 100ms)"
+          - "  - Election timeout: 2000ms (was 1000ms)"
+          - "  - Snapshot count: 5000 (was 10000)"
+          - "This will reduce warnings but won't fix root cause"

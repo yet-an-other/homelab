@@ -1,0 +1,144 @@
+- name: Install Cilium CNI
+  become: true
+  block:
+
+    - name: Wait for API server to be responsive
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw /healthz
+      register: api_health
+      retries: 30
+      delay: 5
+      until: api_health.rc == 0
+
+    - name: Verify etcd pod is running
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pod -n kube-system -l component=etcd -o jsonpath='{.items[0].status.phase}'
+      register: etcd_pod_status
+      retries: 20
+      delay: 5
+      until: etcd_pod_status.stdout == "Running"
+
+    - name: Wait a few seconds for etcd to stabilize
+      pause:
+        seconds: 10
+
+    - name: Add Cilium Helm repository
+      kubernetes.core.helm_repository:
+        name: cilium
+        repo_url: https://helm.cilium.io/
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+
+    - name: Install Cilium using Helm
+      kubernetes.core.helm:
+        name: cilium
+        chart_ref: cilium/cilium
+        chart_version: 1.16.5
+        release_namespace: kube-system
+        create_namespace: false
+        kubeconfig: /etc/kubernetes/admin.conf
+        wait: true
+        wait_timeout: 10m
+        values:
+          # Cluster configuration
+          cluster:
+            name: "{{ cluster_env }}-cluster"
+            id: 0
+
+          # IP address management
+          ipam:
+            mode: kubernetes
+
+          # Pod network CIDR
+          ipv4NativeRoutingCIDR: "{{ pod_network_cidr }}"
+
+          # Tunnel mode (VXLAN)
+          tunnelProtocol: vxlan
+          routingMode: tunnel
+
+          # kube-proxy replacement (eBPF mode)
+          kubeProxyReplacement: true
+          k8sServiceHost: "{{ internal_ip }}"
+          k8sServicePort: 6446
+
+          # Host firewall and routing
+          hostFirewall:
+            enabled: false
+
+          # Wait for API server to be ready
+          waitForKubeProxy: false
+
+          # Enable Hubble observability
+          hubble:
+            enabled: true
+            metrics:
+              enabled:
+                - dns:query;ignoreAAAA
+                - drop
+                - tcp
+                - flow
+                - icmp
+                - http
+              serviceMonitor:
+                enabled: true
+                labels:
+                  release: prometheus
+            relay:
+              enabled: true
+              replicas: 1
+            ui:
+              enabled: true
+              replicas: 1
+              ingress:
+                enabled: false  # Will create separate Ingress via Traefik
+
+          # Operator configuration
+          operator:
+            replicas: 1
+            prometheus:
+              enabled: true
+              serviceMonitor:
+                enabled: true
+                labels:
+                  release: prometheus
+
+          # Prometheus integration
+          prometheus:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+              labels:
+                release: prometheus
+
+          # Security and performance
+          bpf:
+            masquerade: true
+            tproxy: true
+
+          # Enable automatic node CIDR allocation
+          enableIPv4Masquerade: true
+          enableIPv6Masquerade: false
+
+          # CNI configuration
+          cni:
+            install: true
+            chainingMode: none
+            
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+
+    - name: Wait for Cilium pods to be ready
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=ready pod \
+          -l k8s-app=cilium \
+          -n kube-system \
+          --timeout=300s
+      register: cilium_ready
+      retries: 3
+      delay: 10
+      until: cilium_ready.rc == 0
+
+    - name: Display Cilium installation status
+      debug:
+        msg: "Cilium CNI installed successfully with Hubble observability enabled"

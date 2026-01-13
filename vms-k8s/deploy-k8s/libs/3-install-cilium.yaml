@@ -1,0 +1,148 @@
+# Install Cilium CNI with kube-proxy replacement and Hubble
+#
+# Params:
+#   cilium_version: 1.17.2
+#   pod_network_cidr: 10.244.0.0/16
+#   cluster_env: proxmox or hetzner
+#   public_ip: API server endpoint IP
+
+- name: Add Cilium Helm repository
+  become: no
+  kubernetes.core.helm_repository:
+    name: cilium
+    repo_url: https://helm.cilium.io/
+
+- name: Create Cilium namespace
+  become: no
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: kube-system
+
+- name: Install Cilium with kube-proxy replacement
+  become: no
+  kubernetes.core.helm:
+    kubeconfig: /etc/kubernetes/admin.conf
+    name: cilium
+    chart_ref: cilium/cilium
+    chart_version: "{{ cilium_version }}"
+    release_namespace: kube-system
+    wait: true
+    wait_timeout: 10m
+    values:
+      # Cluster configuration
+      cluster:
+        name: "{{ cluster_env }}-cluster"
+        id: 0
+
+      # IP address management
+      ipam:
+        mode: kubernetes
+
+      # Pod network CIDR
+      ipv4NativeRoutingCIDR: "{{ pod_network_cidr }}"
+
+      # Tunnel mode (VXLAN)
+      tunnelProtocol: vxlan
+      routingMode: tunnel
+
+      # kube-proxy replacement (eBPF mode)
+      kubeProxyReplacement: true
+      k8sServiceHost: "{{ public_ip }}"
+      k8sServicePort: 6443
+
+      # Enable Hubble observability
+      hubble:
+        enabled: true
+        metrics:
+          enabled:
+            - dns:query;ignoreAAAA
+            - drop
+            - tcp
+            - flow
+            - icmp
+            - http
+          serviceMonitor:
+            enabled: true
+            labels:
+              release: prometheus
+        relay:
+          enabled: true
+          replicas: 1
+        ui:
+          enabled: true
+          replicas: 1
+          ingress:
+            enabled: false  # Will create separate Ingress via Traefik
+
+      # Operator configuration
+      operator:
+        replicas: 1
+        prometheus:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+            labels:
+              release: prometheus
+
+      # Prometheus integration
+      prometheus:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+          labels:
+            release: prometheus
+
+      # Security and performance
+      bpf:
+        masquerade: true
+        tproxy: true
+
+      # Enable automatic node CIDR allocation
+      enableIPv4Masquerade: true
+      enableIPv6Masquerade: false
+
+      # CNI configuration
+      cni:
+        install: true
+        chainingMode: none
+
+      # Resources (adjust based on cluster size)
+      resources:
+        limits:
+          memory: 500Mi
+        requests:
+          cpu: 100m
+          memory: 200Mi
+
+- name: Wait for Cilium to be ready
+  become: no
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/kubernetes/admin.conf
+    kind: Pod
+    namespace: kube-system
+    label_selectors:
+      - k8s-app=cilium
+  register: cilium_pods
+  until:
+    - cilium_pods.resources is defined
+    - cilium_pods.resources | length > 0
+    - cilium_pods.resources | map(attribute='status.phase') | list | unique == ['Running']
+    - cilium_pods.resources | map(attribute='status.containerStatuses') | flatten | map(attribute='ready') | select('equalto', false) | list | length == 0
+  retries: 30
+  delay: 10
+
+- name: Verify Cilium installation
+  become: yes
+  shell: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=ready pod -l k8s-app=cilium -n kube-system --timeout=300s
+  register: cilium_ready
+  changed_when: false
+
+- name: Display Cilium status
+  debug:
+    msg: "Cilium CNI installed successfully with kube-proxy replacement enabled"

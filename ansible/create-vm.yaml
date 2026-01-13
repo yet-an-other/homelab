@@ -77,23 +77,46 @@
           when: not(vm_info.proxmox_vms[0].config.onboot is defined) or vm_info.proxmox_vms[0].config.onboot != 1
           register: onboot_change
 
-        - name: set hdd size for Ubuntu {{ vm.disk_size }}
+        - name: resize disk for Ubuntu
           shell: |
             qm disk resize {{ vm.id }} scsi0 {{ vm.disk_size }}
+          when: vm.type == "ubuntu" and vm.disk_size is defined and not(vm_info.proxmox_vms[0].config.scsi0 is search('size=' + vm.disk_size))
+          register: disk_change_ubuntu
+
+        - name: resize disk for AlmaLinux
+          shell: |
+            qm disk resize {{ vm.id }} scsi0 {{ vm.disk_size }}
+          when: vm.type == "alma" and vm.disk_size is defined and not(vm_info.proxmox_vms[0].config.scsi0 is search('size=' + vm.disk_size))
+          register: disk_change_alma
+
+        - name: wait for guest agent to be running
+          shell: qm agent {{ vm.id }} ping
+          register: agent_ping
+          until: agent_ping.rc == 0
+          retries: 30
+          delay: 5
+          when: (vm.type == "ubuntu" and disk_change_ubuntu is changed) or (vm.type == "alma" and disk_change_alma is changed)
+          failed_when: false
+
+        - name: expand partition for Ubuntu
+          shell: |
             qm guest exec {{ vm.id }} -- growpart /dev/sda 2
             qm guest exec {{ vm.id }} -- resize2fs /dev/sda2
-          when: vm.type == "ubuntu" and vm.disk_size is defined and not(vm_info.proxmox_vms[0].config.scsi0 is search('size=' + vm.disk_size))
-          register: disk_change
+          when: vm.type == "ubuntu" and disk_change_ubuntu is changed
+          register: disk_expand_ubuntu
 
-        - name: set hdd size for AlmaLinux {{ vm.disk_size }}
-          shell: |
-            qm disk resize {{ vm.id }} scsi0 {{ vm.disk_size }}
-            qm guest exec {{ vm.id }} -- growpart /dev/sda 3
-            qm guest exec {{ vm.id }} -- pvresize /dev/sda3
-            qm guest exec {{ vm.id }} -- lvextend -l +100%FREE /dev/mapper/almalinux-root
-            qm guest exec {{ vm.id }} -- xfs_growfs /
-          when: vm.type == "alma" and vm.disk_size is defined and not(vm_info.proxmox_vms[0].config.scsi0 is search('size=' + vm.disk_size))
-          register: disk_change
+        - name: expand partition for AlmaLinux
+          shell: '{{ item }}'
+          loop:
+            - qm guest exec {{ vm.id }} -- growpart /dev/sda 3
+            - qm guest exec {{ vm.id }} -- pvresize /dev/sda3
+            - qm guest exec {{ vm.id }} -- lvextend -l +100%FREE /dev/mapper/almalinux-root --resizefs
+          when: vm.type == "alma" and disk_change_alma is changed
+          register: disk_expand_alma
+
+        - name: set disk_change flag
+          set_fact:
+            disk_change: "{{ disk_change_ubuntu if vm.type == 'ubuntu' else disk_change_alma }}"
 
         - name: set vlan_id string
           set_fact:

@@ -10,7 +10,7 @@ metadata:
 spec:
   kafka:
     version: {{ app_version }}
-    metadataVersion: 3.9-IV0
+    metadataVersion: 4.1-IV1
     listeners:
       - name: plain
         port: 9092

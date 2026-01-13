@@ -206,7 +206,7 @@
         - name: symlink nvim binary
           file:
             src: /opt/nvim-linux-x86_64/bin/nvim
-            dest: /usr/local/bin/nvim
+            dest: /usr/bin/nvim
             state: link
 
 - name: config neovim

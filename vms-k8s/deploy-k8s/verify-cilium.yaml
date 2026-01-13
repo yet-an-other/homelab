@@ -1,0 +1,94 @@
+- name: Verify Cilium deployment
+  hosts: 'control-nodes[0]'
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Check Cilium status
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kube-system exec daemonset/cilium -- cilium-dbg status --brief
+      register: cilium_status
+      changed_when: false
+
+    - name: Display Cilium status
+      debug:
+        var: cilium_status.stdout_lines
+
+    - name: Check kube-proxy is NOT running
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=kube-proxy
+      register: kube_proxy_check
+      failed_when: kube_proxy_check.stdout_lines | length > 1
+      changed_when: false
+
+    - name: Verify kube-proxy replacement
+      debug:
+        msg: "kube-proxy is correctly absent (replaced by Cilium eBPF)"
+
+    - name: Check Cilium connectivity
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kube-system exec daemonset/cilium -- cilium-dbg connectivity test --single-node
+      register: connectivity_test
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display connectivity test results
+      debug:
+        var: connectivity_test.stdout_lines
+
+    - name: Check Hubble Relay status
+      kubernetes.core.k8s_info:
+        kubeconfig: /etc/kubernetes/admin.conf
+        kind: Deployment
+        namespace: kube-system
+        name: hubble-relay
+      register: hubble_relay
+
+    - name: Verify Hubble Relay is running
+      assert:
+        that:
+          - hubble_relay.resources | length > 0
+          - hubble_relay.resources[0].status.readyReplicas > 0
+        fail_msg: "Hubble Relay is not running"
+        success_msg: "Hubble Relay is running successfully"
+
+    - name: Check Hubble UI status
+      kubernetes.core.k8s_info:
+        kubeconfig: /etc/kubernetes/admin.conf
+        kind: Deployment
+        namespace: kube-system
+        name: hubble-ui
+      register: hubble_ui
+
+    - name: Verify Hubble UI is running
+      assert:
+        that:
+          - hubble_ui.resources | length > 0
+          - hubble_ui.resources[0].status.readyReplicas > 0
+        fail_msg: "Hubble UI is not running"
+        success_msg: "Hubble UI is running successfully"
+
+    - name: Test Hubble flow observation
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kube-system exec deployment/hubble-relay -- hubble observe --last 10
+      register: hubble_flows
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display recent Hubble flows
+      debug:
+        var: hubble_flows.stdout_lines
+
+    - name: Check Cilium metrics endpoint
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kube-system port-forward daemonset/cilium 9962:9962 &
+        sleep 2
+        curl -s http://localhost:9962/metrics | head -20
+        pkill -f "port-forward.*9962"
+      register: cilium_metrics
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display Cilium metrics sample
+      debug:
+        var: cilium_metrics.stdout_lines

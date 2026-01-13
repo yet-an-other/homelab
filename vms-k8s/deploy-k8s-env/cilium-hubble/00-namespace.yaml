@@ -1,0 +1,7 @@
+# Hubble is deployed in kube-system namespace by Cilium Helm chart
+# This file exists for organizational consistency with other services
+
+# The following components are deployed by Cilium:
+# - hubble-relay (Deployment)
+# - hubble-ui (Deployment)
+# - hubble-metrics (Service)

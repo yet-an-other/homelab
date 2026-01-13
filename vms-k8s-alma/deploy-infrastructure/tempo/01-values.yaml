@@ -40,7 +40,7 @@ tempo:
         endpoint: '{{ s3_endpoint }}'  # api endpoint
         access_key: {{ s3_key_id }}                                 
         secret_key: {{ s3_secret }}                                
-        insecure: true                                 
+        insecure: false                            
       wal:
         path: /var/tempo/wal
 

@@ -1,0 +1,6 @@
+- name: Deploy Hubble UI Ingress
+  kubernetes.core.k8s:
+    state: present
+    definition: '{{ item }}'
+  loop:
+    - "{{ lookup('template', 'cilium-hubble/01-hubble-ingress.yaml') }}"

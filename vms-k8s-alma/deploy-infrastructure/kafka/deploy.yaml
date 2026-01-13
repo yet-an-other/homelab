@@ -22,4 +22,4 @@
     vars:
       app_name: kafka
       app_namespace: kafka
-      app_version: 3.9.0
+      app_version: 4.1.1

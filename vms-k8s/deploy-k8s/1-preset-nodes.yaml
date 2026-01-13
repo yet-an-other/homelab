@@ -2,7 +2,19 @@
 
 - name: configure vm
   hosts: 'k8s-nodes'
-  tasks: 
+  tasks:
+
+    ## Check kernel version for Cilium compatibility
+    ##
+    - name: Check kernel version for Cilium compatibility
+      shell: "uname -r | cut -d. -f1,2"
+      register: kernel_version
+      failed_when: kernel_version.stdout is version('4.19', '<')
+      changed_when: false
+
+    - name: Display kernel version
+      debug:
+        msg: "Kernel version {{ kernel_version.stdout }} is compatible with Cilium"
 
     - name: update system
       become: yes
@@ -38,24 +50,28 @@
     - name: update ip-tables for containerd
       become: true
       ansible.builtin.lineinfile:
-        path: /etc/modules-load.d/k8s.conf 
+        path: /etc/modules-load.d/k8s.conf
         line: "{{ item }}"
         create: yes
       with_items:
         - 'overlay'
         - 'br_netfilter'
+        - 'xt_socket'
+        - 'ip_tables'
 
     - name: refresh ip drivers
       become: true
       ansible.builtin.command: "{{ item }}"
-      with_items: 
+      with_items:
         - modprobe overlay
         - modprobe br_netfilter
+        - modprobe xt_socket
+        - modprobe ip_tables
 
     - name: Configure sysctl params for Kubernetes.
       become: true
       ansible.builtin.lineinfile:
-        path: /etc/sysctl.d/99-kubernetes-cri.conf 
+        path: /etc/sysctl.d/99-kubernetes-cri.conf
         line: "{{ item }}"
         create: yes
       with_items:
@@ -64,13 +80,39 @@
         - 'net.bridge.bridge-nf-call-ip6tables = 1'
 
         # fix too many inotify watches error in grafana alloy
-        # 
+        #
         - 'fs.inotify.max_user_watches = 524288'
         - 'fs.inotify.max_user_instances = 512'
+
+        # Cilium-specific parameters
+        #
+        - 'net.ipv4.conf.all.rp_filter = 0'
+        - 'net.ipv4.conf.default.rp_filter = 0'
+        - 'net.core.bpf_jit_enable = 1'
+        - 'net.core.bpf_jit_harden = 0'
+        - 'kernel.unprivileged_bpf_disabled = 1'
 
     - name: Apply sysctl params without reboot
       become: true
       command: sysctl --system
+
+    ## Mount BPF filesystem for Cilium
+    ##
+    - name: Ensure BPF filesystem is mounted
+      become: true
+      ansible.builtin.mount:
+        path: /sys/fs/bpf
+        src: bpffs
+        fstype: bpf
+        opts: defaults
+        state: mounted
+
+    - name: Make BPF mount persistent
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "bpffs /sys/fs/bpf bpf defaults 0 0"
+        state: present
 
     ## Update /etc/hosts with node information
     ##

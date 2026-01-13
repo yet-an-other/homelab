@@ -40,7 +40,8 @@
         --cri-socket=unix:///run/containerd/containerd.sock \
         --apiserver-cert-extra-sans={{ cert_extra_sans }} \
         --certificate-key={{ certificate_key.stdout }} \
-        --upload-certs
+        --upload-certs \
+        --skip-phases=addon/kube-proxy
       args:
         creates: /etc/kubernetes/manifests/kube-apiserver.yaml
 
@@ -66,13 +67,22 @@
 
     - name: get host name
       shell: "hostname"
-      register: host_name 
+      register: host_name
 
-    ## install kube network
+    ## Install Helm (required for Cilium)
     ##
-    - name: Create Pod Network & RBAC.
-      ansible.builtin.command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml 
+    - import_tasks: ./libs/0-install-helm.yaml
+      vars:
+        helm_version: '3.17.0'
+
+    ## Install Cilium CNI with kube-proxy replacement
+    ##
+    - import_tasks: ./libs/3-install-cilium.yaml
+      vars:
+        cilium_version: '1.17.2'
+        pod_network_cidr: '10.244.0.0/16'
+        cluster_env: '{{ cluster_env }}'
+        public_ip: '{{ public_ip }}' 
 
     - name: Get the token for joining the nodes with Kuberentes master.
       shell: "kubeadm token create"

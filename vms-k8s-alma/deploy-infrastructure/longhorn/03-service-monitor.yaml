@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: longhorn-prometheus-servicemonitor
+  namespace: {{ app_namespace }}
+  labels:
+    name: longhorn-prometheus-servicemonitor
+    {{ prometheus_label | indent(4) }}              # Change this to match your Prometheus Operator's 'release' labelt
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-manager
+  namespaceSelector:
+    matchNames:
+    - longhorn-system
+  endpoints:
+  - port: manager
