@@ -23,6 +23,7 @@
         creates: ~/.acme.sh
 
     - name: register notification
+      no_log: true
       shell: |
         export NTFY_URL={{ ntfy_url }}
         export NTFY_TOPIC={{ ntfy_topic }}
@@ -32,6 +33,7 @@
         creates: /usr/ssl/fullchain.crt      
 
     - name: issue certificate
+      no_log: true
       shell: |
         export CF_Token="{{ cf_token }}"
         export CF_Zone_ID="{{ cf_zone_id }}"

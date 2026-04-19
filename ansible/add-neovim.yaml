@@ -1,0 +1,123 @@
+- name: set neovim defaults
+  ansible.builtin.set_fact:
+    managed_user: "{{ managed_user | default(ansible_env.SUDO_USER | default(ansible_user)) }}"
+    managed_group: "{{ managed_group | default(managed_user | default(ansible_env.SUDO_USER | default(ansible_user))) }}"
+    managed_home: "{{ managed_home | default('/root' if (managed_user | default(ansible_env.SUDO_USER | default(ansible_user))) == 'root' else '/home/' + (managed_user | default(ansible_env.SUDO_USER | default(ansible_user)))) }}"
+    nvim_config_dir: "{{ nvim_config_dir | default(managed_home + '/.config/nvim') }}"
+    nvim_backup_dir: "{{ nvim_backup_dir | default(managed_home + '/.config/nvim.bak.' + ansible_date_time.epoch) }}"
+    nvim_archive_url: "{{ nvim_archive_url | default('https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz') }}"
+    nvim_archive_path: "{{ nvim_archive_path | default('/tmp/nvim-linux-x86_64.tar.gz') }}"
+    nvim_extract_root: "{{ nvim_extract_root | default('/opt') }}"
+    nvim_binary_path: "{{ nvim_binary_path | default('/usr/local/bin/nvim') }}"
+    lazyvim_repo: "{{ lazyvim_repo | default('https://github.com/LazyVim/starter') }}"
+    keymaps_src: "{{ keymaps_src | default(playbook_dir + '/../ansible/keymaps.lua') }}"
+
+- name: set defaults
+  ansible.builtin.set_fact:
+    nvim_install_dir: "{{ nvim_install_dir | default(nvim_extract_root + '/nvim-linux-x86_64') }}"
+    lazyvim_keymaps_path: "{{ lazyvim_keymaps_path | default(nvim_config_dir + '/lua/config/keymaps.lua') }}"
+
+- name: ensure nvim install directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ nvim_extract_root }}"
+    state: directory
+    mode: '0755'
+
+- name: check if official nvim is already installed
+  become: true
+  ansible.builtin.stat:
+    path: "{{ nvim_install_dir }}/bin/nvim"
+  register: nvim_install_stat
+
+- name: download official nvim archive
+  become: true
+  ansible.builtin.get_url:
+    url: "{{ nvim_archive_url }}"
+    dest: "{{ nvim_archive_path }}"
+    mode: '0644'
+  when: not nvim_install_stat.stat.exists
+
+- name: unpack official nvim archive
+  become: true
+  ansible.builtin.unarchive:
+    src: "{{ nvim_archive_path }}"
+    dest: "{{ nvim_extract_root }}"
+    remote_src: true
+  when: not nvim_install_stat.stat.exists
+
+- name: remove official nvim archive
+  become: true
+  ansible.builtin.file:
+    path: "{{ nvim_archive_path }}"
+    state: absent
+
+- name: symlink nvim binary
+  become: true
+  ansible.builtin.file:
+    src: "{{ nvim_install_dir }}/bin/nvim"
+    dest: "{{ nvim_binary_path }}"
+    state: link
+
+- name: check if neovim config directory exists
+  become: true
+  ansible.builtin.stat:
+    path: "{{ nvim_config_dir }}"
+  register: nvim_config_stat
+
+- name: check if lazyvim is installed
+  ansible.builtin.stat:
+    path: "{{ nvim_config_dir }}/lazyvim.json"
+  register: lazyvim_stat
+
+- name: back up existing neovim config before lazyvim migration
+  become: true
+  become_user: "{{ managed_user }}"
+  ansible.builtin.command:
+    argv:
+      - mv
+      - "{{ nvim_config_dir }}"
+      - "{{ nvim_backup_dir }}"
+  when:
+    - nvim_config_stat.stat.exists
+    - not lazyvim_stat.stat.exists
+
+- name: ensure neovim config directory exists
+  become: true
+  become_user: "{{ managed_user }}"
+  ansible.builtin.file:
+    path: "{{ nvim_config_dir }}"
+    state: directory
+    owner: "{{ managed_user }}"
+    group: "{{ managed_group }}"
+    mode: '0755'
+
+- name: install lazyvim starter
+  become: true
+  become_user: "{{ managed_user }}"
+  ansible.builtin.git:
+    repo: "{{ lazyvim_repo }}"
+    dest: "{{ nvim_config_dir }}"
+    depth: 1
+    update: false
+  when: not lazyvim_stat.stat.exists
+
+- name: ensure lazyvim config directory exists
+  become: true
+  become_user: "{{ managed_user }}"
+  ansible.builtin.file:
+    path: "{{ nvim_config_dir }}/lua/config"
+    state: directory
+    owner: "{{ managed_user }}"
+    group: "{{ managed_group }}"
+    mode: '0755'
+
+- name: configure lazyvim keymaps
+  become: true
+  become_user: "{{ managed_user }}"
+  ansible.builtin.copy:
+    dest: "{{ lazyvim_keymaps_path }}"
+    owner: "{{ managed_user }}"
+    group: "{{ managed_group }}"
+    mode: '0644'
+    content: "{{ lookup('file', keymaps_src) }}"

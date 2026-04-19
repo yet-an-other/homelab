@@ -1,0 +1,12 @@
+- name: install eza on AlmaLinux
+  become: true
+  delegate_to: "{{ container_hostname }}"
+  shell: "{{ item }}"
+  with_items:
+    - curl -L https://github.com/eza-community/eza/releases/download/v0.23.4/eza_x86_64-unknown-linux-gnu.zip -o /tmp/eza.zip
+    - unzip /tmp/eza.zip -d /tmp/
+    - mv /tmp/eza /usr/bin/eza
+    - chmod +x /usr/bin/eza
+    - rm /tmp/eza.zip
+  args:
+    creates: /usr/bin/eza

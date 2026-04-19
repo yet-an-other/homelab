@@ -1,0 +1,210 @@
+- name: set zsh defaults
+  ansible.builtin.set_fact:
+    managed_user: "{{ managed_user | default(ansible_env.SUDO_USER | default(ansible_user)) }}"
+
+- name: set zsh defaults 1
+  ansible.builtin.set_fact:
+    managed_home: "{{ managed_home | default('/root' if (managed_user | default(ansible_env.SUDO_USER | default(ansible_user))) == 'root' else '/home/' + (managed_user | default(ansible_env.SUDO_USER | default(ansible_user)))) }}"
+
+- name: set zsh defaults 2
+  ansible.builtin.set_fact:
+    dotfiles_repo: "{{ dotfiles_repo | default('https://github.com/yet-an-other/dotfiles.git') }}"
+    dotfiles_dir: "{{ dotfiles_dir | default(managed_home + '/.dotfiles') }}"
+    zshrc_path: "{{ zshrc_path | default(managed_home + '/.zshrc') }}"
+    p10k_path: "{{ p10k_path | default(managed_home + '/.p10k.zsh') }}"
+    oh_my_zsh_repo: "{{ oh_my_zsh_repo | default('https://github.com/ohmyzsh/ohmyzsh.git') }}"
+    powerlevel10k_dir: "{{ powerlevel10k_dir | default(managed_home + '/.oh-my-zsh/custom/themes/powerlevel10k') }}"
+    zsh_syntax_highlighting_dir: "{{ zsh_syntax_highlighting_dir | default(managed_home + '/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting') }}"
+    nerd_fonts_dir: "{{ nerd_fonts_dir | default(managed_home + '/.local/share/fonts/JetBrainsMonoNerdFont') }}"
+    nerd_fonts_archive: "{{ nerd_fonts_archive | default('/tmp/JetBrainsMono.zip') }}"
+    jetbrainsmono_nerd_fonts_url: "{{ jetbrainsmono_nerd_fonts_url | default('https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip') }}"
+
+- name: set zsh derived paths
+  ansible.builtin.set_fact:
+    dotfiles_zshrc_path: "{{ dotfiles_zshrc_path | default(dotfiles_dir + '/zsh-ssh/.zshrc') }}"
+    dotfiles_p10k_path: "{{ dotfiles_p10k_path | default(dotfiles_dir + '/zsh-ssh/.p10k.zsh') }}"
+
+- name: install zsh packages on Ubuntu
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+    name:
+      - zsh
+      - gcc
+      - curl
+      - git
+      - unzip
+      - fontconfig
+      - eza
+    state: present
+  when: vm.type == 'ubuntu'
+
+- name: install zsh packages on AlmaLinux
+  become: true
+  ansible.builtin.dnf:
+    name:
+      - zsh
+      - gcc
+      - curl
+      - git
+      - unzip
+      - fontconfig
+    state: present
+  when: vm.type == 'alma'
+
+- name: install zsh packages on Alpine
+  become: true
+  ansible.builtin.apk:
+    update_cache: true
+    name:
+      - zsh
+      - gcc
+      - curl
+      - git
+      - unzip
+      - fontconfig
+    state: present
+  when: vm.type == 'alpine'
+
+- name: resolve zsh path
+  ansible.builtin.command: which zsh
+  register: zsh_path
+  changed_when: false
+
+- name: change default shell to zsh for {{ managed_user }}
+  become: true
+  ansible.builtin.user:
+    name: "{{ managed_user }}"
+    shell: "{{ zsh_path.stdout }}"
+
+- name: check if oh-my-zsh is installed
+  become: true
+  ansible.builtin.stat:
+    path: "{{ managed_home }}/.oh-my-zsh"
+  register: oh_my_zsh_stat
+
+- name: install oh-my-zsh if missing
+  become_user: "{{ managed_user }}"
+  ansible.builtin.git:
+    repo: "{{ oh_my_zsh_repo }}"
+    dest: "{{ managed_home }}/.oh-my-zsh"
+    depth: 1
+    update: false
+  when: not oh_my_zsh_stat.stat.exists
+
+- name: check if powerlevel10k is installed
+  become: true
+  ansible.builtin.stat:
+    path: "{{ powerlevel10k_dir }}"
+  register: powerlevel10k_stat
+
+- name: install powerlevel10k if missing
+  become_user: "{{ managed_user }}"
+  ansible.builtin.git:
+    repo: https://github.com/romkatv/powerlevel10k.git
+    dest: "{{ powerlevel10k_dir }}"
+    depth: 1
+    update: false
+  when: not powerlevel10k_stat.stat.exists
+
+- name: check if zsh-syntax-highlighting is installed
+  become: true
+  ansible.builtin.stat:
+    path: "{{ zsh_syntax_highlighting_dir }}"
+  register: zsh_syntax_highlighting_stat
+
+- name: install zsh-syntax-highlighting if missing
+  become_user: "{{ managed_user }}"
+  ansible.builtin.git:
+    repo: https://github.com/zsh-users/zsh-syntax-highlighting.git
+    dest: "{{ zsh_syntax_highlighting_dir }}"
+    depth: 1
+    update: false
+  when: not zsh_syntax_highlighting_stat.stat.exists
+
+- name: fetch dotfiles repo
+  become_user: "{{ managed_user }}"
+  ansible.builtin.git:
+    repo: "{{ dotfiles_repo }}"
+    dest: "{{ dotfiles_dir }}"
+    version: main
+    force: true
+
+- name: ensure zsh config directory exists
+  become_user: "{{ managed_user }}"
+  ansible.builtin.file:
+    path: "{{ managed_home }}/.config"
+    state: directory
+    mode: '0755'
+
+- name: check current .zshrc link
+  become: true
+  ansible.builtin.stat:
+    path: "{{ zshrc_path }}"
+    follow: false
+  register: zshrc_stat
+
+- name: link .zshrc from dotfiles
+  become_user: "{{ managed_user }}"
+  ansible.builtin.file:
+    src: "{{ dotfiles_zshrc_path }}"
+    dest: "{{ zshrc_path }}"
+    state: link
+  when: not (zshrc_stat.stat.islnk | default(false) and zshrc_stat.stat.lnk_source == dotfiles_zshrc_path)
+
+- name: check current .p10k.zsh link
+  become: true
+  ansible.builtin.stat:
+    path: "{{ p10k_path }}"
+    follow: false
+  register: p10k_stat
+
+- name: link .p10k.zsh from dotfiles
+  become_user: "{{ managed_user }}"
+  ansible.builtin.file:
+    src: "{{ dotfiles_p10k_path }}"
+    dest: "{{ p10k_path }}"
+    state: link
+  when: not (p10k_stat.stat.islnk | default(false) and p10k_stat.stat.lnk_source == dotfiles_p10k_path)
+
+- name: check if JetBrainsMono Nerd Font is installed
+  become: true
+  ansible.builtin.stat:
+    path: "{{ nerd_fonts_dir }}"
+  register: nerd_fonts_stat
+
+- name: create fonts directory
+  become_user: "{{ managed_user }}"
+  ansible.builtin.file:
+    path: "{{ nerd_fonts_dir }}"
+    state: directory
+    mode: '0755'
+  when: not nerd_fonts_stat.stat.exists
+
+- name: download JetBrainsMono Nerd Font archive
+  become_user: "{{ managed_user }}"
+  ansible.builtin.get_url:
+    url: "{{ jetbrainsmono_nerd_fonts_url }}"
+    dest: "{{ nerd_fonts_archive }}"
+    mode: '0644'
+  when: not nerd_fonts_stat.stat.exists
+
+- name: install JetBrainsMono Nerd Font
+  become_user: "{{ managed_user }}"
+  ansible.builtin.unarchive:
+    src: "{{ nerd_fonts_archive }}"
+    dest: "{{ nerd_fonts_dir }}"
+    remote_src: true
+  when: not nerd_fonts_stat.stat.exists
+
+- name: remove JetBrainsMono Nerd Font archive
+  become: true
+  ansible.builtin.file:
+    path: "{{ nerd_fonts_archive }}"
+    state: absent
+  when: not nerd_fonts_stat.stat.exists
+
+- name: refresh font cache
+  become_user: "{{ managed_user }}"
+  ansible.builtin.command: fc-cache -f "{{ managed_home }}/.local/share/fonts"
+  when: not nerd_fonts_stat.stat.exists
