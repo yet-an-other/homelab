@@ -1,0 +1,124 @@
+# create-forpost.yaml — configure the forpost cloud VPN entry node (forpost/SPEC.md §9).
+#
+# Run via: ./apply.sh forpost
+#
+# Prerequisites (SPEC §10 runbook):
+#   1. Ubuntu VM (x86_64 or arm64) created at any provider, with
+#      forpost/user-data.yaml pasted as user-data
+#   2. Manual A record: forpost.domain -> VM public IP
+#   3. forpost host entry + vars section in ansible/inventory.secret.yaml
+#      (shape documented in ansible/template-proxmox-inventory.yaml).
+#      Key material is human-generated once and pasted in:
+#        xray x25519                  # private_key (Reality server key)
+#        xray x25519 -i <private>     # derive the public key for client share links (SPEC §8)
+#        uuidgen                      # per user
+#      or run forpost/genkeys.sh to print a ready-to-paste inventory block.
+#   4. Upstream clients: add forpost's client UUID to bastion's xray clients
+#      (vm-bastion/) and to alwyzon's xray (manual — external VM); record the
+#      coordinates in the forpost.alwyzon / forpost.bastion vars.
+#
+# Iterating on the VPN layer only (re-runs units 40-42):
+#   ansible-playbook -i ansible/inventory.secret.yaml forpost/create-forpost.yaml -e forpost_bootstrap_args="--from 40"
+#
+# Idempotency (SPEC §9): bootstrap only runs when pushed files or rendered
+# configs changed, or when forpost_bootstrap_args is given — a second
+# ./apply.sh forpost on an unchanged node reports no changes.
+---
+- name: configure forpost vpn entry node
+  hosts: forpost
+  become: yes
+  gather_facts: true
+  vars:
+    forpost_bootstrap_args: ""
+    forpost_home: /usr/local/sbin/forpost
+    forpost_nginx_staging: /etc/nginx/.forpost-staging
+  tasks:
+    - name: wait for ssh on port 42318
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 5
+
+    - name: assert the forpost inventory contract
+      ansible.builtin.assert:
+        that:
+          - forpost.domain is defined and forpost.domain | length > 0
+          - forpost.server_name is defined and forpost.server_name | length > 0
+          - forpost.private_key is defined and forpost.private_key | length > 0
+          - forpost.short_ids is defined and forpost.short_ids | length > 0
+          - forpost.users is defined and forpost.users | length > 0
+          - forpost.users | selectattr('name', 'undefined') | list | length == 0
+          - forpost.users | selectattr('uuid', 'undefined') | list | length == 0
+          - forpost.users | map(attribute='name') | list == (forpost.users | map(attribute='name') | unique | list)
+          - forpost.alwyzon.address is defined and forpost.alwyzon.address | length > 0
+          - forpost.alwyzon.uuid is defined and forpost.alwyzon.uuid | length > 0
+          - forpost.alwyzon.public_key is defined and forpost.alwyzon.public_key | length > 0
+          - forpost.bastion.address is defined and forpost.bastion.address | length > 0
+          - forpost.bastion.uuid is defined and forpost.bastion.uuid | length > 0
+          - forpost.bastion.public_key is defined and forpost.bastion.public_key | length > 0
+        fail_msg: >-
+          the forpost vars section in ansible/inventory.secret.yaml is incomplete —
+          see forpost/SPEC.md §3 and ansible/template-proxmox-inventory.yaml
+        quiet: true
+
+    - name: issue tls certificate for {{ forpost.domain }}
+      import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        container_hostname: "{{ inventory_hostname }}"
+        sites: "-d {{ forpost.domain }}"
+        reloadcmd: "systemctl reload nginx 2>/dev/null || true"
+
+    - name: push bootstrap.sh and units
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0755"
+      loop:
+        - { src: "bootstrap.sh", dest: "{{ forpost_home }}/bootstrap.sh" }
+        - { src: "units/", dest: "{{ forpost_home }}/units" }
+      register: forpost_push
+
+    - name: create xray config directory
+      ansible.builtin.file:
+        path: /usr/local/etc/xray
+        state: directory
+        mode: "0750"
+
+    - name: render xray config
+      ansible.builtin.template:
+        src: templates/xray-config.json.j2
+        dest: /usr/local/etc/xray/config.json
+        mode: "0640"
+      no_log: true
+      register: forpost_xray_config
+
+    - name: render nginx configs to staging
+      ansible.builtin.template:
+        src: "templates/{{ item }}.j2"
+        dest: "{{ forpost_nginx_staging }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - nginx.conf
+        - default.conf
+        - fallback.conf
+      register: forpost_nginx_render
+
+    - name: run forpost bootstrap
+      ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh {{ forpost_bootstrap_args }}"
+      when: forpost_push is changed
+        or forpost_xray_config is changed
+        or forpost_nginx_render is changed
+        or forpost_bootstrap_args | length > 0
+
+    - name: verify port 443 answers from outside
+      ansible.builtin.wait_for:
+        host: "{{ forpost.domain }}"
+        port: 443
+        timeout: 30
+      delegate_to: localhost
+
+    - name: verify services are active
+      ansible.builtin.command: "systemctl is-active {{ item }}"
+      loop:
+        - xray
+        - nginx
+      changed_when: false

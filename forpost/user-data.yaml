@@ -1,0 +1,36 @@
+#cloud-config
+# forpost user-data — slim, reachability-only bootstrap shim (SPEC §7).
+# Paste this as user-data when creating the cloud VM. It only guarantees the
+# node is reachable by Ansible on port 42318 as user `ib`; everything else is
+# delivered by ./apply.sh forpost (units/ are the contract, 10-user-sshd.sh
+# re-asserts all of this).
+#
+# No repo clone, no credentials, no script embedding.
+
+users:
+  - name: ib
+    groups: [sudo, adm]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    shell: /usr/bin/zsh
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOU3h/cYVAtFlzRyUG7e2KOrIbLUpuZnTf81ZRd/yIMC
+
+disable_root: true
+ssh_pwauth: false
+
+packages: [zsh]
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-ib-hardening.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      Port 42318
+      PermitRootLogin no
+      PasswordAuthentication no
+      PubkeyAuthentication yes
+      AllowUsers ib
+
+runcmd:
+  - systemctl restart ssh

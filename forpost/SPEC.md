@@ -1,6 +1,6 @@
 # forpost — cloud VPN entry node
 
-Status: **spec, ready to build**. Every decision herein comes from the wayfinder map
+Status: **implemented**. Every decision herein comes from the wayfinder map
 ([issue #2](https://github.com/yet-an-other/homelab/issues/2)) and its resolved tickets
 ([#3](https://github.com/yet-an-other/homelab/issues/3),
 [#5](https://github.com/yet-an-other/homelab/issues/5),

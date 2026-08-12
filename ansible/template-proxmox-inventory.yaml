@@ -29,6 +29,60 @@ proxmox:
     wg_client_private_key: ""
     wg_client_public_key: ""
     wg_port: 
+    lb_local:
+      wg:
+        ip: ""
+        private_key: ""
+        port:
+        peer_1:
+          ip: ""
+          public_key: ""
 
     qbt_webgui_password: ""
     sponsorblock_screen_id: ""
+
+# ---------------------------------------------------------------------------
+# forpost — cloud VPN entry node (forpost/SPEC.md §3)
+#
+# Copy this group into inventory.secret.yaml and fill in the values. The A
+# record for `domain` stays manual (point it at ansible_host). ntfy_*/cf_* are
+# the same values as in the proxmox section above (cert issuance for the
+# fallback vhost + notifications). Key material helpers: xray x25519,
+# xray x25519 -i <private>, uuidgen — or run forpost/genkeys.sh.
+# Multi-node later = more host entries + suffixed vars sections (forpost_fra: …).
+# ---------------------------------------------------------------------------
+# vpn:
+#   hosts:
+#     forpost:
+#       ansible_host: ""        # VM public IP
+#       ansible_port: 42318
+#       ansible_user: ib
+#       ansible_ssh_private_key_file: ""   # same key the repo already uses
+#   vars:
+#     ntfy_url: ""
+#     ntfy_topic: ""
+#     cf_token: ""
+#     cf_zone_id: ""
+#
+#     forpost:
+#       domain: fp1.bdgn.me     # node public name; manual A record -> ansible_host
+#       server_name: fp1.bdgn.me # Reality SNI; normally == domain
+#       private_key: ""         # xray x25519 private key
+#       short_ids: ["01", "02"]
+#       users:
+#         - { name: admin, uuid: "", privileged: true }
+#         - { name: mom,   uuid: "", privileged: false }
+#       alwyzon:                # forpost's CLIENT credentials on alwyzon's xray
+#         address: ""
+#         port: 443
+#         uuid: ""
+#         server_name: ""
+#         public_key: ""        # alwyzon x25519 public key (reality `password`)
+#         short_id: "01"
+#       bastion:                # forpost's CLIENT credentials on bastion's xray
+#         address: ""           # externally-reachable bastion xray endpoint
+#         port: 443
+#         uuid: ""
+#         server_name: ""
+#         public_key: ""
+#         short_id: "01"
