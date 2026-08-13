@@ -1,7 +1,8 @@
 # create-forpost.yaml — configure the forpost cloud VPN entry node (forpost/SPEC.md §9).
 #
-# Skeleton (issue #8): connect, transport the bundle, invoke the entrypoint.
-# Cert issuance and template rendering land with the VPN-layer tickets (#10+).
+# Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9):
+# connect, push the bundle, run the units. Cert issuance and template
+# rendering land with the VPN-layer tickets (#10+).
 #
 # Run via: ./apply.sh forpost
 #
