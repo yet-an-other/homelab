@@ -70,6 +70,14 @@
         - { src: "units/", dest: "{{ forpost_home }}/units" }
       register: forpost_push
 
+    - name: create the xray config directory
+      ansible.builtin.file:
+        path: /usr/local/etc/xray
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: render the xray config before units run (SPEC §9)
       ansible.builtin.template:
         src: templates/xray-config.json.j2
