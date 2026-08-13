@@ -38,6 +38,7 @@
     - name: validate the forpost secrets shape (SPEC §3/§6)
       ansible.builtin.assert:
         that:
+          - forpost.domain | length > 0
           - forpost.server_name | length > 0
           - forpost.private_key | length > 0
           - forpost.short_ids | length > 0
@@ -73,7 +74,9 @@
       ansible.builtin.template:
         src: templates/xray-config.json.j2
         dest: /usr/local/etc/xray/config.json
-        mode: "0644"
+        owner: root
+        group: root
+        mode: "0640"  # embeds the Reality private key
       register: forpost_xray_config
 
     - name: run forpost bootstrap
@@ -95,12 +98,17 @@
         quiet: true
 
     - name: verify xray is active and enabled
-      ansible.builtin.command: systemctl is-active xray
-      register: forpost_xray_active
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - systemctl is-active xray
+        - systemctl is-enabled xray
+      register: forpost_xray_state
       changed_when: false
 
     - name: assert xray service state
       ansible.builtin.assert:
-        that: forpost_xray_active.stdout == "active"
-        fail_msg: xray is not active — see journalctl -u xray -e on the node
+        that:
+          - forpost_xray_state.results[0].stdout == "active"
+          - forpost_xray_state.results[1].stdout == "enabled"
+        fail_msg: xray is not active+enabled — see journalctl -u xray -e on the node
         quiet: true

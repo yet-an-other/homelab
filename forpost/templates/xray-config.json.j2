@@ -17,7 +17,8 @@
 -#}
 {%- set clients = [] -%}
 {%- for u in forpost.users -%}
-  {%- set _ = clients.append({"id": u.uuid, "flow": "xtls-rprx-vision", "email": u.name}) -%}
+  {#- SPEC §6 render-time assert: every user has name + uuid -#}
+  {%- set _ = clients.append({"id": u.uuid | mandatory("forpost user is missing uuid"), "flow": "xtls-rprx-vision", "email": u.name | mandatory("forpost user is missing name")}) -%}
 {%- endfor -%}
 {%- set config = {
   "log": {
