@@ -1,21 +1,17 @@
 {#-
   xray-config.json.j2 — forpost xray config (SPEC §6).
 
-  #10 scope: the VLESS+Reality inbound (vision flow, sniffing) plus a
+  #10..#13 scope: the VLESS+Reality inbound (vision flow, sniffing) plus a
   freedom outbound and a lone catch-all rule sending everything direct to
   the wild. The alwyzon/bastion upstream outbounds and the privileged
   routing split land in #11/#12 — when they do, the freedom outbound drops
   out and the upstream outbounds go FIRST (order matters, defense-in-depth).
 
-  #10 interim listen: public 443, so the node is client-verifiable before
-  nginx exists. #13 moves the inbound back to 127.0.0.1:20001 behind the
-  nginx SNI map.
-
-  #10 interim dest: the REAL speed.bdgn.me:443. Current xray mirrors dest's
-  handshake even for fully authenticated clients, so a dead dest kills
-  valid connections too (diagnosed on the node: auth succeeded, then EOF).
-  #13 flips dest to 127.0.0.1:8443 — the nginx fallback vhost, which
-  reverse-proxies this same site (SPEC §7).
+  The inbound sits behind the nginx SNI map (#13): nginx owns public 443
+  and ssl_prereads the SNI here. The reality `dest` (127.0.0.1:8443) is the
+  nginx fallback vhost. dest MUST be a live TLS 1.3 endpoint: current xray
+  mirrors dest's handshake even for fully authenticated clients — a dead
+  dest kills valid sessions too (diagnosed in #10).
 
   Rendered by create-forpost.yaml to /usr/local/etc/xray/config.json before
   units run; 40-xray.sh validates (`xray -test`) and restarts on change.
@@ -34,8 +30,8 @@
   "inbounds": [
     {
       "tag": "vless-reality",
-      "listen": "0.0.0.0",
-      "port": 443,
+      "listen": "127.0.0.1",
+      "port": 20001,
       "protocol": "vless",
       "settings": {
         "clients": clients,
@@ -46,7 +42,7 @@
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "speed.bdgn.me:443",
+          "dest": "127.0.0.1:8443",
           "serverNames": [forpost.server_name],
           "privateKey": forpost.private_key,
           "shortIds": forpost.short_ids

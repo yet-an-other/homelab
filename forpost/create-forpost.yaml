@@ -1,10 +1,14 @@
 # create-forpost.yaml — configure the forpost cloud VPN entry node (forpost/SPEC.md §9).
 #
 # Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9)
-# + xray with direct-to-wild routing (issue #10): connect, validate the
-# forpost secrets shape, render the xray config, push the bundle, run the
-# units. Cert issuance and nginx template rendering land with #13; the
-# alwyzon/bastion upstreams with #11/#12.
+# + xray (issue #10) + the client-facing path: cert, nginx SNI entry, ufw
+# (issue #13). The alwyzon/bastion upstreams land with #11/#12.
+#
+# Ordering note (#13): the xray restart in unit 40 moves the inbound behind
+# nginx and onto the local fallback dest; until unit 41 starts nginx a few
+# seconds later, client connections can drop. xray recovers on its own
+# (dest is dialed per connection) — a one-time blip during this deploy,
+# not a stranded state.
 #
 # Run via: ./apply.sh forpost
 #
@@ -49,8 +53,21 @@
             (forpost.users | map(attribute='name') | list | length)
             == (forpost.users | map(attribute='name') | unique | list | length)
         fail_msg: >-
-          forpost vars incomplete: server_name, private_key, short_ids and
-          users (each with a unique name and a uuid) are required — see
+          forpost vars incomplete: domain, server_name, private_key,
+          short_ids and users (each with a unique name and a uuid) are
+          required — see ansible/template-proxmox-inventory.yaml
+        quiet: true
+
+    - name: validate the cert-issuance inputs (SPEC §7)
+      ansible.builtin.assert:
+        that:
+          - ntfy_url is defined and ntfy_url | length > 0
+          - ntfy_topic is defined and ntfy_topic | length > 0
+          - cf_token is defined and cf_token | length > 0
+          - cf_zone_id is defined and cf_zone_id | length > 0
+        fail_msg: >-
+          ntfy_url, ntfy_topic, cf_token and cf_zone_id are required for the
+          Cloudflare DNS-challenge cert — see the vpn group vars in
           ansible/template-proxmox-inventory.yaml
         quiet: true
 
@@ -70,6 +87,14 @@
         - { src: "units/", dest: "{{ forpost_home }}/units" }
       register: forpost_push
 
+    - name: issue the TLS cert for the node domain (SPEC §7)
+      import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        container_hostname: "{{ inventory_hostname }}"
+        sites: "-d {{ forpost.domain }}"
+        # nginx may not be running on first issuance; 41-nginx starts it
+        reloadcmd: "systemctl reload nginx || true"
+
     - name: create the xray config directory
       ansible.builtin.file:
         path: /usr/local/etc/xray
@@ -87,10 +112,30 @@
         mode: "0640"    # embeds the Reality private key; not world-readable
       register: forpost_xray_config
 
+    - name: create the nginx staging directory
+      ansible.builtin.file:
+        path: "{{ forpost_home }}/nginx"
+        state: directory
+        mode: "0755"
+
+    - name: render the nginx confs into staging (SPEC §9 — units place them)
+      ansible.builtin.template:
+        src: "templates/{{ item }}.j2"
+        dest: "{{ forpost_home }}/nginx/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - nginx.conf
+        - default.conf
+        - fallback.conf
+      register: forpost_nginx_render
+
     - name: run forpost bootstrap
       ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh {{ forpost_bootstrap_args }}"
       when: forpost_push is changed
         or forpost_xray_config is changed
+        or forpost_nginx_render is changed
         or forpost_bootstrap_args | length > 0
 
     - name: collect per-unit logs
@@ -113,18 +158,40 @@
         fail_msg: no per-unit logs in /var/log/forpost — bootstrap did not run any unit
         quiet: true
 
-    - name: verify xray is active and enabled
+    - name: verify xray and nginx are active and enabled
       ansible.builtin.command: "{{ item }}"
       loop:
         - systemctl is-active xray
         - systemctl is-enabled xray
-      register: forpost_xray_state
+        - systemctl is-active nginx
+        - systemctl is-enabled nginx
+      register: forpost_service_state
       changed_when: false
 
-    - name: assert xray service state
+    - name: assert service states
       ansible.builtin.assert:
         that:
-          - forpost_xray_state.results[0].stdout == "active"
-          - forpost_xray_state.results[1].stdout == "enabled"
-        fail_msg: xray is not active+enabled — see journalctl -u xray -e on the node
+          - forpost_service_state.results[0].stdout == "active"
+          - forpost_service_state.results[1].stdout == "enabled"
+          - forpost_service_state.results[2].stdout == "active"
+          - forpost_service_state.results[3].stdout == "enabled"
+        fail_msg: xray/nginx not active+enabled — see journalctl on the node
+        quiet: true
+
+    - name: verify the firewall is locked down (SPEC §5)
+      ansible.builtin.command: ufw status
+      register: forpost_ufw_status
+      changed_when: false
+
+    - name: assert ufw exposes only ssh and the entry port
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in forpost_ufw_status.stdout"
+          - "'42318/tcp' in forpost_ufw_status.stdout"
+          - "'443/tcp' in forpost_ufw_status.stdout"
+          - "'80' not in forpost_ufw_status.stdout"
+          - "'443/udp' not in forpost_ufw_status.stdout"
+        fail_msg: >-
+          ufw must be active with only 42318/tcp and 443/tcp allowed —
+          got: {{ forpost_ufw_status.stdout }}
         quiet: true
