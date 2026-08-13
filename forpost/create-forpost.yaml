@@ -32,6 +32,12 @@
         timeout: 300
         delay: 5
 
+    - name: create forpost staging directory
+      ansible.builtin.file:
+        path: "{{ forpost_home }}"
+        state: directory
+        mode: "0755"
+
     - name: push bootstrap.sh and units
       ansible.builtin.copy:
         src: "{{ item.src }}"
