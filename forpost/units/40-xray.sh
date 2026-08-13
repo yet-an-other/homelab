@@ -30,6 +30,9 @@ bash "${unit_dir}/lib/install-xray.sh"
 install -d -m 0755 /var/log/xray
 
 # --- logrotate --------------------------------------------------------------
+# The official installer seeds its own /etc/logrotate.d/xray (rotate 7, no
+# copytruncate — xray holds its log fds, so a rename-rotate would strand the
+# stream in the old file). We deliberately override it with copytruncate.
 
 if ! dpkg -s logrotate >/dev/null 2>&1; then
   apt-get update

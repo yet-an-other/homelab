@@ -83,8 +83,8 @@
         src: templates/xray-config.json.j2
         dest: /usr/local/etc/xray/config.json
         owner: root
-        group: root
-        mode: "0640"  # embeds the Reality private key
+        group: nogroup  # the official installer's xray.service runs as User=nobody
+        mode: "0640"    # embeds the Reality private key; not world-readable
       register: forpost_xray_config
 
     - name: run forpost bootstrap
