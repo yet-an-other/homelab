@@ -99,6 +99,13 @@
         patterns: "*.log"
       register: forpost_unit_logs
 
+    - name: verify xray answers on the client-facing 443
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 443
+        timeout: 30
+      delegate_to: localhost
+
     - name: verify the bootstrap wrote per-unit logs
       ansible.builtin.assert:
         that: forpost_unit_logs.matched > 0

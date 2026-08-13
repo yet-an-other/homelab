@@ -151,8 +151,10 @@ units never template — they place, verify, restart.
 
 ## 6. xray configuration (#3, #7)
 
-Rolled out in slices: #10 ships the inbound + a freedom catch-all (direct to the wild);
-the upstream outbounds and rules below land in #11 (alwyzon) and #12 (bastion split).
+Rolled out in slices: #10 ships the inbound (listening on public 443 as an
+interim — #13 moves it to 127.0.0.1:20001 behind the nginx SNI map) plus a
+freedom catch-all (direct to the wild); the upstream outbounds and rules
+below land in #11 (alwyzon) and #12 (bastion split).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 
