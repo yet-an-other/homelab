@@ -105,6 +105,7 @@
         port: 443
         timeout: 30
       delegate_to: localhost
+      become: false  # runs on the controller; the play-level become needs a sudo password there
 
     - name: verify the bootstrap wrote per-unit logs
       ansible.builtin.assert:
