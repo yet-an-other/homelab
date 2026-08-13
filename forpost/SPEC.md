@@ -39,7 +39,8 @@ forpost/
 ├── bootstrap.sh             # entrypoint: runs units in lexical order
 ├── units/                   # idempotent, numbered; the source of truth for node state
 │   ├── lib/
-│   │   └── install-xray.sh  # vendored copy of frontgate/install-xray.sh
+│   │   ├── install-xray.sh  # vendored copy of frontgate/install-xray.sh
+│   │   └── zmx-select.sh    # vendored copy of cloud-init/zmx-select.sh
 │   ├── 00-packages.sh
 │   ├── 01-unattended-upgrades.sh
 │   ├── 10-user-sshd.sh
@@ -132,7 +133,7 @@ the reference; the units are the executable source of truth.
 | `20-shell.sh` | oh-my-zsh, powerlevel10k, zsh-syntax-highlighting; clone `yet-an-other/dotfiles`; symlink `.zshrc`, `.p10k.zsh` | `[ ! -d …/.git ]` (existing pattern) |
 | `21-fonts.sh` | JetBrainsMono Nerd Font → `~/.local/share/fonts`, `fc-cache` | archive presence / reinstall-safe |
 | `30-editor.sh` | neovim latest tarball → `/opt/nvim-linux-<arch>`, symlink `/usr/local/bin/nvim`; LazyVim starter; keymaps.lua symlink from dotfiles | version/arch detection |
-| `31-tools.sh` | eza (apt or latest `.deb` by arch, existing `install_eza` pattern); zmx tarball by arch → `/usr/local/bin` | `command -v` / version check |
+| `31-tools.sh` | eza (apt or latest `.deb` by arch, existing `install_eza` pattern); zmx tarball by arch → `/usr/local/bin`; zmx-select.sh session picker → `/opt/zmx-select.sh` | `command -v` / version check; file content compare |
 
 `10-user-sshd.sh` re-asserts what user-data already did minimally — intentional: user-data is a
 bootstrap shim (§7), the unit is the contract.

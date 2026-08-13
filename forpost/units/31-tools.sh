@@ -5,15 +5,19 @@
 # eza: apt when the distro carries it, otherwise the latest upstream .deb for
 # the architecture (the existing install_eza pattern from
 # cloud-init/cloud-init-ubuntu.yaml). zmx: pinned tarball by architecture
-# into /usr/local/bin (zmx names its arm build aarch64).
+# into /usr/local/bin (zmx names its arm build aarch64), plus the
+# zmx-select.sh session-picker helper (vendored from cloud-init/) at
+# /opt/zmx-select.sh.
 #
-# Idempotency guards: `command -v` for both tools.
+# Idempotency guards: `command -v` for the tools, content compare for the
+# helper script.
 #
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
 zmx_version="0.6.0"
+zmx_select_target="/opt/zmx-select.sh"
 
 install_eza() {
   local arch
@@ -83,5 +87,24 @@ install_zmx() {
   echo "31-tools: zmx ${zmx_version} installed"
 }
 
+install_zmx_select() {
+  local src
+  src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/zmx-select.sh"
+
+  if [ ! -f "${src}" ]; then
+    echo "31-tools: missing vendored helper: ${src}" >&2
+    return 1
+  fi
+
+  if [ -f "${zmx_select_target}" ] && cmp -s "${src}" "${zmx_select_target}"; then
+    echo "31-tools: ${zmx_select_target} already in place"
+    return 0
+  fi
+
+  install -m 0755 -o root -g root "${src}" "${zmx_select_target}"
+  echo "31-tools: installed ${zmx_select_target}"
+}
+
 install_eza
 install_zmx
+install_zmx_select
