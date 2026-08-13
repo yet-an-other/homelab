@@ -9,9 +9,13 @@
 
   #10 interim listen: public 443, so the node is client-verifiable before
   nginx exists. #13 moves the inbound back to 127.0.0.1:20001 behind the
-  nginx SNI map, and the reality `dest` (127.0.0.1:8443) to the nginx
-  fallback vhost — until then nothing listens on 8443, which only affects
-  probe fallback, not real clients.
+  nginx SNI map.
+
+  #10 interim dest: the REAL speed.bdgn.me:443. Current xray mirrors dest's
+  handshake even for fully authenticated clients, so a dead dest kills
+  valid connections too (diagnosed on the node: auth succeeded, then EOF).
+  #13 flips dest to 127.0.0.1:8443 — the nginx fallback vhost, which
+  reverse-proxies this same site (SPEC §7).
 
   Rendered by create-forpost.yaml to /usr/local/etc/xray/config.json before
   units run; 40-xray.sh validates (`xray -test`) and restarts on change.
@@ -42,7 +46,7 @@
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "127.0.0.1:8443",
+          "dest": "speed.bdgn.me:443",
           "serverNames": [forpost.server_name],
           "privateKey": forpost.private_key,
           "shortIds": forpost.short_ids

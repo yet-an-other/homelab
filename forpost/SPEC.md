@@ -154,7 +154,9 @@ units never template — they place, verify, restart.
 Rolled out in slices: #10 ships the inbound (listening on public 443 as an
 interim — #13 moves it to 127.0.0.1:20001 behind the nginx SNI map) plus a
 freedom catch-all (direct to the wild); the upstream outbounds and rules
-below land in #11 (alwyzon) and #12 (bastion split).
+below land in #11 (alwyzon) and #12 (bastion split). Until #13, `dest`
+points at the real `speed.bdgn.me:443` — xray mirrors dest's handshake even
+for authenticated clients, so dest must always be a live TLS 1.3 endpoint.
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 
