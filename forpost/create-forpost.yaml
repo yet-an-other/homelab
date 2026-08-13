@@ -1,8 +1,10 @@
 # create-forpost.yaml — configure the forpost cloud VPN entry node (forpost/SPEC.md §9).
 #
-# Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9):
-# connect, push the bundle, run the units. Cert issuance and template
-# rendering land with the VPN-layer tickets (#10+).
+# Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9)
+# + xray with direct-to-wild routing (issue #10): connect, validate the
+# forpost secrets shape, render the xray config, push the bundle, run the
+# units. Cert issuance and nginx template rendering land with #13; the
+# alwyzon/bastion upstreams with #11/#12.
 #
 # Run via: ./apply.sh forpost
 #
@@ -33,6 +35,24 @@
         timeout: 300
         delay: 5
 
+    - name: validate the forpost secrets shape (SPEC §3/§6)
+      ansible.builtin.assert:
+        that:
+          - forpost.server_name | length > 0
+          - forpost.private_key | length > 0
+          - forpost.short_ids | length > 0
+          - forpost.users | length > 0
+          - forpost.users | selectattr('name', 'undefined') | list | length == 0
+          - forpost.users | selectattr('uuid', 'undefined') | list | length == 0
+          - >-
+            (forpost.users | map(attribute='name') | list | length)
+            == (forpost.users | map(attribute='name') | unique | list | length)
+        fail_msg: >-
+          forpost vars incomplete: server_name, private_key, short_ids and
+          users (each with a unique name and a uuid) are required — see
+          ansible/template-proxmox-inventory.yaml
+        quiet: true
+
     - name: create forpost staging directory
       ansible.builtin.file:
         path: "{{ forpost_home }}"
@@ -49,9 +69,17 @@
         - { src: "units/", dest: "{{ forpost_home }}/units" }
       register: forpost_push
 
+    - name: render the xray config before units run (SPEC §9)
+      ansible.builtin.template:
+        src: templates/xray-config.json.j2
+        dest: /usr/local/etc/xray/config.json
+        mode: "0644"
+      register: forpost_xray_config
+
     - name: run forpost bootstrap
       ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh {{ forpost_bootstrap_args }}"
       when: forpost_push is changed
+        or forpost_xray_config is changed
         or forpost_bootstrap_args | length > 0
 
     - name: collect per-unit logs
@@ -64,4 +92,15 @@
       ansible.builtin.assert:
         that: forpost_unit_logs.matched > 0
         fail_msg: no per-unit logs in /var/log/forpost — bootstrap did not run any unit
+        quiet: true
+
+    - name: verify xray is active and enabled
+      ansible.builtin.command: systemctl is-active xray
+      register: forpost_xray_active
+      changed_when: false
+
+    - name: assert xray service state
+      ansible.builtin.assert:
+        that: forpost_xray_active.stdout == "active"
+        fail_msg: xray is not active — see journalctl -u xray -e on the node
         quiet: true
