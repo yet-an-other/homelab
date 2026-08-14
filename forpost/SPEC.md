@@ -66,8 +66,10 @@ arch-aware via `dpkg --print-architecture` (x86_64 primary, arm64 supported).
 `bootstrap.sh`: `set -euo pipefail`; runs `units/[0-9][0-9]-*.sh` in order; supports
 `--only <NN|name>` and `--from <NN>` for iteration; logs per-unit to `/var/log/forpost/`.
 
-Staging path on the node: `/usr/local/sbin/forpost/` (bootstrap + units), templates rendered by the
-play directly to their final destinations (xray config, nginx confs) before the corresponding unit runs.
+Staging path on the node: `/usr/local/sbin/forpost/` (bootstrap + units). Templates are rendered by the
+play before the corresponding unit runs: the xray config directly to its final destination
+(`/usr/local/etc/xray/config.json`); the nginx confs into staging under `/usr/local/sbin/forpost/nginx/` —
+`41-nginx.sh` places them (units place, verify, restart, §5).
 
 ## 3. Secrets (#6)
 
@@ -284,9 +286,11 @@ vless://<uuid>@<domain>:443?security=reality&sni=<server_name>&fp=chrome&pbk=<re
 2. cert for `forpost.domain` via `import_tasks: ../ansible/add-ssl-certificate.yaml`
 3. push `bootstrap.sh` + `units/` → `/usr/local/sbin/forpost/` (mode 0755)
 4. render `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`
-5. render `templates/{nginx.conf,default.conf,fallback.conf}.j2` → staging under `/etc/nginx/`
-6. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
-7. verify: `wait_for port 443`, `systemctl is-active xray nginx`
+5. render `templates/{nginx.conf,default.conf,fallback.conf}.j2` → staging under `/usr/local/sbin/forpost/nginx/`
+6. nginx first: `bootstrap.sh --only 41` brings the fallback vhost up BEFORE any xray restart — xray
+   mirrors dest's handshake even for authenticated clients, so xray-first ordering drops clients (#10)
+7. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
+8. verify: `wait_for port 443`, `systemctl is-active xray nginx`, ufw lockdown (42318 + 443/tcp only)
 
 Re-running the play on a live node must be a no-op when nothing changed (idempotency, #5).
 

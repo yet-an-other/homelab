@@ -48,7 +48,7 @@ stream {
 
         map $ssl_preread_server_name $upstream_map {
 
-                default                 main; # must be first entry
+                default                 main;
 
                 {{ forpost.server_name }}     vless-reality;
         }

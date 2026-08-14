@@ -19,7 +19,15 @@ staging="${forpost_home}/nginx"
 
 changed=0
 
-# --- stream module ----------------------------------------------------------
+# --- nginx + stream module --------------------------------------------------
+# Installed here (not only in 00-packages) so the play can bring nginx up
+# FIRST via `bootstrap.sh --only 41` — even on a fresh node — before unit
+# 40 restarts xray behind it.
+
+if ! dpkg -s nginx >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y nginx
+fi
 
 if ! dpkg -s libnginx-mod-stream >/dev/null 2>&1; then
   apt-get update

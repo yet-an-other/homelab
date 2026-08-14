@@ -4,11 +4,11 @@
 # + xray (issue #10) + the client-facing path: cert, nginx SNI entry, ufw
 # (issue #13). The alwyzon/bastion upstreams land with #11/#12.
 #
-# Ordering note (#13): the xray restart in unit 40 moves the inbound behind
-# nginx and onto the local fallback dest; until unit 41 starts nginx a few
-# seconds later, client connections can drop. xray recovers on its own
-# (dest is dialed per connection) — a one-time blip during this deploy,
-# not a stranded state.
+# Ordering note (#13): when the deploy will change anything, nginx is
+# brought up FIRST (bootstrap --only 41) so the fallback vhost is live
+# before unit 40 restarts xray onto the local dest — xray mirrors dest's
+# handshake even for authenticated clients, so xray-first ordering would
+# drop clients (post-mortem in #10).
 #
 # Run via: ./apply.sh forpost
 #
@@ -131,6 +131,13 @@
         - fallback.conf
       register: forpost_nginx_render
 
+    - name: bring nginx up before xray moves behind it (SPEC §7 ordering)
+      ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh --only 41"
+      when: forpost_push is changed
+        or forpost_xray_config is changed
+        or forpost_nginx_render is changed
+        or forpost_bootstrap_args | length > 0
+
     - name: run forpost bootstrap
       ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh {{ forpost_bootstrap_args }}"
       when: forpost_push is changed
@@ -183,14 +190,19 @@
       register: forpost_ufw_status
       changed_when: false
 
+    - name: collect the allowed ufw rules
+      ansible.builtin.set_fact:
+        forpost_ufw_allowed: >-
+          {{ forpost_ufw_status.stdout_lines
+             | select('search', 'ALLOW')
+             | map('regex_replace', '^(\S+)( \(v6\))?\s+ALLOW.*$', '\1')
+             | unique | sort }}
+
     - name: assert ufw exposes only ssh and the entry port
       ansible.builtin.assert:
         that:
           - "'Status: active' in forpost_ufw_status.stdout"
-          - "'42318/tcp' in forpost_ufw_status.stdout"
-          - "'443/tcp' in forpost_ufw_status.stdout"
-          - "'80' not in forpost_ufw_status.stdout"
-          - "'443/udp' not in forpost_ufw_status.stdout"
+          - forpost_ufw_allowed == ["42318/tcp", "443/tcp"]
         fail_msg: >-
           ufw must be active with only 42318/tcp and 443/tcp allowed —
           got: {{ forpost_ufw_status.stdout }}
