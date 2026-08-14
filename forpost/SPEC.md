@@ -205,11 +205,17 @@ Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
    rule gates internal-IP routing on that marker (wg-in); auth ignores group 3
    (`docs/research/xray-vlessroute.md` Q1).
 3. `blocked`: `blackhole`, `settings.response.type: "none"`.
+4. `dns-internal`: Xray's `dns` outbound. It feeds privileged clients' intercepted A/AAAA
+   queries into the built-in split-horizon DNS module.
+5. `direct`: `freedom`, deliberately unused and last (debugging aid).
 
 **Routing** (top-to-bottom, first match; `domainStrategy: "AsIs"`):
 
 ```json
 "rules": [
+  { "type": "field", "inboundTag": ["dns-query"], "ip": ["192.168.30.1/32"], "outboundTag": "bastion" },
+  { "type": "field", "inboundTag": ["dns-query"],                                 "outboundTag": "alwyzon" },
+  { "type": "field", "user": [<privileged names>], "port": "53", "network": "udp,tcp", "outboundTag": "dns-internal" },
   { "type": "field", "user": [<privileged names>], "domain": ["domain:bdgn.me"],   "outboundTag": "bastion" },
   { "type": "field", "user": [<privileged names>], "ip": ["192.168.0.0/16"],        "outboundTag": "bastion" },
   { "type": "field",                                 "ip": ["192.168.0.0/16"],        "outboundTag": "blocked" },
@@ -221,8 +227,14 @@ Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 The template asserts at render time: every user has `name` + `uuid`; names unique (the play
 validates uniqueness before render; the template enforces the per-user fields via `mandatory`).
 
-**No `dns` module.** Domain rules match by name; bastion resolves `bdgn.me` internally
-(its existing config already does, via 192.168.30.1), alwyzon resolves the rest.
+**DNS override.** For privileged authenticated users, any traditional DNS request carried by
+the tunnel (UDP/TCP port 53, regardless of whether the client addressed 1.1.1.1, 8.8.8.8, etc.)
+is intercepted by `dns-internal`. The built-in DNS module sends `domain:bdgn.me` to
+`192.168.30.1` with `skipFallback: true`; its tagged query routes via the marked bastion outbound.
+Other names use `1.1.1.1` via alwyzon. Non-privileged clients bypass the override. Xray 26.3.27's
+DNS outbound uses the legacy `nonIPQuery` settings and resolves A/AAAA through the module; the
+newer documented `rewriteAddress`/`rules` fields are silently ignored by this pinned build.
+Ordinary proxied domains are still resolved by bastion or alwyzon.
 
 **UDP policy**: `xtls-rprx-vision` blocks UDP/443 (QUIC) deliberately — clients fall back to TCP.
 No Mux server-side.
@@ -288,13 +300,14 @@ vless://<uuid>@<domain>:443?security=reality&sni=<server_name>&fp=chrome&pbk=<re
 
 **Client DNS (split horizon).** `*.bdgn.me` is a split-horizon zone: internal-only names
 (`syncthing`, `s3`, `speed-test`, …) exist ONLY on the internal resolver `192.168.30.1` — public
-resolvers (1.1.1.1 and friends) NXDOMAIN them, and public-record names resolve to frontgate's
-public entry, bypassing the internal path. Clients that resolve names themselves (phone apps in
-VPN mode — effectively all of them) must therefore use the **internal resolver through the tunnel**:
-set the client's remote/VPN DNS to `192.168.30.1` (reachable only via the VPN; queries ride the
-same `192.168.0.0/16` routing as other internal traffic). Clients that pass domains to the tunnel
-(socks5h-style, desktop setups) don't need this — bastion resolves `bdgn.me` internally (its dns
-module, scoped to 192.168.30.1 with its queries routed via wg-in — see `vm-bastion/`).
+resolvers NXDOMAIN them, and public-record names resolve to frontgate's public entry. For a
+privileged client whose traditional DNS traffic traverses the VPN, forpost transparently
+intercepts UDP/TCP port 53 and resolves `bdgn.me` through `192.168.30.1`; the configured resolver
+address (1.1.1.1, 8.8.8.8, etc.) therefore does not matter. The override cannot intercept encrypted
+DNS (DoH/DoT/DoQ on 443/853) or DNS deliberately sent outside the VPN. Such clients must disable
+Private/Encrypted DNS or set their remote/VPN DNS to `192.168.30.1`. Non-privileged users retain
+their configured public resolver and still cannot reach internal IPs. Clients that pass domains
+through the tunnel (socks5h-style) use bastion's scoped internal DNS module instead.
 
 ## 9. The play: `create-forpost.yaml` (#6)
 
