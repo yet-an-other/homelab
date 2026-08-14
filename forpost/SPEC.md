@@ -286,6 +286,16 @@ vless://<uuid>@<domain>:443?security=reality&sni=<server_name>&fp=chrome&pbk=<re
 
 `pbk` derived from `forpost.private_key` via `xray x25519 -i`. UUIDs are plain v4 — no marker semantics.
 
+**Client DNS (split horizon).** `*.bdgn.me` is a split-horizon zone: internal-only names
+(`syncthing`, `s3`, `speed-test`, …) exist ONLY on the internal resolver `192.168.30.1` — public
+resolvers (1.1.1.1 and friends) NXDOMAIN them, and public-record names resolve to frontgate's
+public entry, bypassing the internal path. Clients that resolve names themselves (phone apps in
+VPN mode — effectively all of them) must therefore use the **internal resolver through the tunnel**:
+set the client's remote/VPN DNS to `192.168.30.1` (reachable only via the VPN; queries ride the
+same `192.168.0.0/16` routing as other internal traffic). Clients that pass domains to the tunnel
+(socks5h-style, desktop setups) don't need this — bastion resolves `bdgn.me` internally (its dns
+module, scoped to 192.168.30.1 with its queries routed via wg-in — see `vm-bastion/`).
+
 ## 9. The play: `create-forpost.yaml` (#6)
 
 `hosts: forpost` (the secret-inventory host entry). Run via `./apply.sh forpost` — unchanged.
