@@ -1,11 +1,15 @@
 {#-
   xray-config.json.j2 — forpost xray config (SPEC §6).
 
-  #10..#13 landed the inbound + nginx entry; #11 chained all traffic via
-  alwyzon — the upstream outbound goes FIRST (order matters,
-  defense-in-depth) and the catch-all points at it; the freedom outbound
-  stays, unused, as a debugging aid. #12 adds the bastion outbound + the
-  privileged split (and the blocked blackhole).
+  #10..#13 landed the inbound + nginx entry; #11 chained the catch-all via
+  alwyzon. #12 (this config): the full routing table — the bastion outbound
+  and the privileged split. Privilege is the AUTHENTICATED email tag
+  (SPEC §1): privileged users get domain:bdgn.me and 192.168.0.0/16 via
+  bastion; 192.168.0.0/16 is blocked for everyone else; everything else
+  (incl. non-privileged bdgn.me — the domain has public records) goes to
+  alwyzon. Outbound order: alwyzon, bastion, blocked — defense-in-depth;
+  freedom stays last, unused, as a debugging aid. No dns module: bastion
+  and alwyzon resolve their own traffic (SPEC §6).
 
   The inbound sits behind the nginx SNI map (#13): nginx owns public 443
   and ssl_prereads the SNI here. The reality `dest` (127.0.0.1:8443) is the
@@ -27,6 +31,14 @@
   {#- SPEC §6 render-time assert: every user has name + uuid -#}
   {%- set _ = clients.append({"id": u.uuid | mandatory("forpost user is missing uuid"), "flow": "xtls-rprx-vision", "email": u.name | mandatory("forpost user is missing name")}) -%}
 {%- endfor -%}
+{%- set privileged = forpost.users | selectattr('privileged') | map(attribute='name') | list -%}
+{#- Bastion routes internal IPs (192.168/16) via wg-in only for UUIDs
+    carrying the vlessRoute "1" marker (group 3 = 0001). xray auth ignores
+    group 3 (research Q1), so the plain registered UUID authenticates; the
+    marker only selects the internal path. Derived here so the secrets hold
+    the true registered credential. -#}
+{%- set bu = forpost.bastion.uuid.split('-') -%}
+{%- set bastion_marked_uuid = bu[0] ~ '-' ~ bu[1] ~ '-0001-' ~ bu[3] ~ '-' ~ bu[4] -%}
 {%- set config = {
   "log": {
     "loglevel": "warning",
@@ -84,6 +96,32 @@
       }
     },
     {
+      "tag": "bastion",
+      "protocol": "vless",
+      "settings": {
+        "address": forpost.bastion.address | mandatory("forpost.bastion.address is required"),
+        "port": forpost.bastion.port | mandatory("forpost.bastion.port is required"),
+        "id": bastion_marked_uuid,
+        "encryption": "none",
+        "flow": "xtls-rprx-vision"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": forpost.bastion.server_name | mandatory("forpost.bastion.server_name is required"),
+          "fingerprint": "chrome",
+          "password": forpost.bastion.public_key | mandatory("forpost.bastion.public_key is required"),
+          "shortId": forpost.bastion.short_id | mandatory("forpost.bastion.short_id is required")
+        }
+      }
+    },
+    {
+      "tag": "blocked",
+      "protocol": "blackhole",
+      "settings": { "response": { "type": "none" } }
+    },
+    {
       "tag": "direct",
       "protocol": "freedom"
     }
@@ -91,6 +129,23 @@
   "routing": {
     "domainStrategy": "AsIs",
     "rules": [
+      {
+        "type": "field",
+        "user": privileged,
+        "domain": ["domain:bdgn.me"],
+        "outboundTag": "bastion"
+      },
+      {
+        "type": "field",
+        "user": privileged,
+        "ip": ["192.168.0.0/16"],
+        "outboundTag": "bastion"
+      },
+      {
+        "type": "field",
+        "ip": ["192.168.0.0/16"],
+        "outboundTag": "blocked"
+      },
       {
         "type": "field",
         "network": "tcp,udp",

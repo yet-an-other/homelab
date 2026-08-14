@@ -2,8 +2,8 @@
 #
 # Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9)
 # + xray (issue #10) + the client-facing path: cert, nginx SNI entry, ufw
-# (issue #13) + all traffic chained via alwyzon (issue #11). The bastion
-# outbound and privileged split land with #12.
+# (issue #13) + all traffic chained via alwyzon (issue #11) + full routing:
+# bastion outbound and the privileged split (issue #12).
 #
 # Ordering note (#13): when the deploy will change anything, nginx is
 # brought up FIRST (bootstrap --only 41) so the fallback vhost is live
@@ -20,7 +20,8 @@
 #   3. forpost host entry + vars section (incl. the alwyzon upstream client
 #      credentials) in ansible/inventory.secret.yaml (shape documented in
 #      ansible/template-proxmox-inventory.yaml)
-#   4. Manual gate (#11): forpost's client UUID added to alwyzon's xray
+#   4. Manual gates (#11/#12): forpost's client UUIDs added to alwyzon's and
+#      bastion's xray (bastion's is vm-bastion/)
 #
 # Re-running a subset of units:
 #   ansible-playbook -i ansible/inventory.secret.yaml forpost/create-forpost.yaml -e forpost_bootstrap_args="--from 40"
@@ -62,11 +63,18 @@
           - forpost.alwyzon.server_name | length > 0
           - forpost.alwyzon.public_key | length > 0
           - forpost.alwyzon.short_id | length > 0
+          - forpost.bastion is defined
+          - forpost.bastion.address | length > 0
+          - forpost.bastion.port | int > 0
+          - forpost.bastion.uuid | length > 0
+          - forpost.bastion.server_name | length > 0
+          - forpost.bastion.public_key | length > 0
+          - forpost.bastion.short_id | length > 0
         fail_msg: >-
           forpost vars incomplete: domain, server_name, private_key,
           short_ids, users (each with a unique name and a uuid) and the
-          alwyzon upstream client section (address, port, uuid, server_name,
-          public_key, short_id) are required — see
+          alwyzon + bastion upstream client sections (address, port, uuid,
+          server_name, public_key, short_id) are required — see
           ansible/template-proxmox-inventory.yaml
         quiet: true
 

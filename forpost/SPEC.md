@@ -154,11 +154,11 @@ units never template — they place, verify, restart.
 ## 6. xray configuration (#3, #7)
 
 Rolled out in slices: #10 + #13 landed the inbound (127.0.0.1:20001 behind the
-nginx SNI map, `dest` = the local fallback vhost); #11 chained all traffic via
-alwyzon (catch-all → alwyzon, first outbound; freedom kept, unused, for
-debugging); #12 adds the bastion outbound + privileged split + blocked rule
-below. `dest` must always be a live TLS 1.3 endpoint — xray mirrors dest's
-handshake even for authenticated clients (post-mortem in #10).
+nginx SNI map, `dest` = the local fallback vhost); #11 chained the catch-all via
+alwyzon; #12 landed the full routing table below (bastion outbound, privileged
+split, blocked rule; freedom kept last, unused, for debugging). `dest` must
+always be a live TLS 1.3 endpoint — xray mirrors dest's handshake even for
+authenticated clients (post-mortem in #10).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 
@@ -197,7 +197,10 @@ Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
    xtls-rprx-vision`, `streamSettings`: tcp + reality (`serverName`, `fingerprint: chrome`,
    `publicKey`, `shortId`). Field name note: newer xray renames outbound `publicKey` → `password`;
    match the pinned xray version (`docs/research/xray-vlessroute.md` Q4).
-2. `bastion`: same shape from `forpost.bastion.*`.
+2. `bastion`: same shape from `forpost.bastion.*`. The outbound dials with the
+   group-3 `0001` marker derived from the registered UUID — bastion's `vlessRoute: "1"`
+   rule gates internal-IP routing on that marker (wg-in); auth ignores group 3
+   (`docs/research/xray-vlessroute.md` Q1).
 3. `blocked`: `blackhole`, `settings.response.type: "none"`.
 
 **Routing** (top-to-bottom, first match; `domainStrategy: "AsIs"`):
