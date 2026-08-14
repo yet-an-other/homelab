@@ -21,9 +21,13 @@ state_dir="/var/lib/forpost"
 stamp="${state_dir}/xray-config.stamp"
 logrotate_conf="/etc/logrotate.d/xray"
 
+# Pinned: the rendered config's field names (e.g. reality `password`) are
+# matched to this version — bump deliberately (SPEC §6, research Q4).
+xray_version="v26.3.27"
+
 # --- install / upgrade ----------------------------------------------------
 
-bash "${unit_dir}/lib/install-xray.sh"
+bash "${unit_dir}/lib/install-xray.sh" --version "${xray_version}"
 
 # The config logs to /var/log/xray (SPEC §6); make sure `xray -test` and the
 # service can open the files even on a fresh node.
