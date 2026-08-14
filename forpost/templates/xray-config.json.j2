@@ -1,17 +1,22 @@
 {#-
   xray-config.json.j2 — forpost xray config (SPEC §6).
 
-  #10..#13 scope: the VLESS+Reality inbound (vision flow, sniffing) plus a
-  freedom outbound and a lone catch-all rule sending everything direct to
-  the wild. The alwyzon/bastion upstream outbounds and the privileged
-  routing split land in #11/#12 — when they do, the freedom outbound drops
-  out and the upstream outbounds go FIRST (order matters, defense-in-depth).
+  #10..#13 scope: the VLESS+Reality inbound (vision flow, sniffing). #11
+  scope: all traffic chained through alwyzon — the upstream outbound goes
+  FIRST (order matters, defense-in-depth) and the catch-all points at it;
+  the freedom outbound stays, unused, as a debugging aid. #12 adds the
+  bastion outbound + the privileged split (and the blocked blackhole).
 
   The inbound sits behind the nginx SNI map (#13): nginx owns public 443
   and ssl_prereads the SNI here. The reality `dest` (127.0.0.1:8443) is the
   nginx fallback vhost. dest MUST be a live TLS 1.3 endpoint: current xray
   mirrors dest's handshake even for fully authenticated clients — a dead
   dest kills valid sessions too (diagnosed in #10).
+
+  Outbound reality field naming: current xray (>= 25.8, node runs 26.x)
+  renamed the client-side publicKey field to `password` — the value is the
+  upstream's x25519 PUBLIC key (research: docs/research/xray-vlessroute.md
+  Q4). The flat outbound form (no vnext) is current; vnext still works.
 
   Rendered by create-forpost.yaml to /usr/local/etc/xray/config.json before
   units run; 40-xray.sh validates (`xray -test`) and restarts on change.
@@ -57,6 +62,27 @@
   ],
   "outbounds": [
     {
+      "tag": "alwyzon",
+      "protocol": "vless",
+      "settings": {
+        "address": forpost.alwyzon.address,
+        "port": forpost.alwyzon.port,
+        "id": forpost.alwyzon.uuid,
+        "encryption": "none",
+        "flow": "xtls-rprx-vision"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": forpost.alwyzon.server_name,
+          "fingerprint": "chrome",
+          "password": forpost.alwyzon.public_key,
+          "shortId": forpost.alwyzon.short_id
+        }
+      }
+    },
+    {
       "tag": "direct",
       "protocol": "freedom"
     }
@@ -67,7 +93,7 @@
       {
         "type": "field",
         "network": "tcp,udp",
-        "outboundTag": "direct"
+        "outboundTag": "alwyzon"
       }
     ]
   }

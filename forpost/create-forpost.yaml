@@ -2,7 +2,8 @@
 #
 # Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9)
 # + xray (issue #10) + the client-facing path: cert, nginx SNI entry, ufw
-# (issue #13). The alwyzon/bastion upstreams land with #11/#12.
+# (issue #13) + all traffic chained via alwyzon (issue #11). The bastion
+# outbound and privileged split land with #12.
 #
 # Ordering note (#13): when the deploy will change anything, nginx is
 # brought up FIRST (bootstrap --only 41) so the fallback vhost is live
@@ -16,8 +17,10 @@
 #   1. Ubuntu VM (x86_64 or arm64) created at any provider, with
 #      forpost/user-data.yaml pasted as user-data
 #   2. Manual A record: forpost.domain -> VM public IP
-#   3. forpost host entry in ansible/inventory.secret.yaml (shape documented
-#      in ansible/template-proxmox-inventory.yaml)
+#   3. forpost host entry + vars section (incl. the alwyzon upstream client
+#      credentials) in ansible/inventory.secret.yaml (shape documented in
+#      ansible/template-proxmox-inventory.yaml)
+#   4. Manual gate (#11): forpost's client UUID added to alwyzon's xray
 #
 # Re-running a subset of units:
 #   ansible-playbook -i ansible/inventory.secret.yaml forpost/create-forpost.yaml -e forpost_bootstrap_args="--from 40"
@@ -52,10 +55,19 @@
           - >-
             (forpost.users | map(attribute='name') | list | length)
             == (forpost.users | map(attribute='name') | unique | list | length)
+          - forpost.alwyzon is defined
+          - forpost.alwyzon.address | length > 0
+          - forpost.alwyzon.port | int > 0
+          - forpost.alwyzon.uuid | length > 0
+          - forpost.alwyzon.server_name | length > 0
+          - forpost.alwyzon.public_key | length > 0
+          - forpost.alwyzon.short_id | length > 0
         fail_msg: >-
           forpost vars incomplete: domain, server_name, private_key,
-          short_ids and users (each with a unique name and a uuid) are
-          required — see ansible/template-proxmox-inventory.yaml
+          short_ids, users (each with a unique name and a uuid) and the
+          alwyzon upstream client section (address, port, uuid, server_name,
+          public_key, short_id) are required — see
+          ansible/template-proxmox-inventory.yaml
         quiet: true
 
     - name: validate the cert-issuance inputs (SPEC §7)

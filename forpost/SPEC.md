@@ -154,10 +154,11 @@ units never template — they place, verify, restart.
 ## 6. xray configuration (#3, #7)
 
 Rolled out in slices: #10 + #13 landed the inbound (127.0.0.1:20001 behind the
-nginx SNI map, `dest` = the local fallback vhost) with a freedom catch-all
-direct to the wild; the upstream outbounds and rules below land in #11 (alwyzon)
-and #12 (bastion split). `dest` must always be a live TLS 1.3 endpoint — xray
-mirrors dest's handshake even for authenticated clients (post-mortem in #10).
+nginx SNI map, `dest` = the local fallback vhost); #11 chained all traffic via
+alwyzon (catch-all → alwyzon, first outbound; freedom kept, unused, for
+debugging); #12 adds the bastion outbound + privileged split + blocked rule
+below. `dest` must always be a live TLS 1.3 endpoint — xray mirrors dest's
+handshake even for authenticated clients (post-mortem in #10).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 
