@@ -27,8 +27,11 @@ client ──VLESS+Reality──> forpost ──VLESS+Reality──> alwyzon ─
 ```
 
 Privilege is enforced by the **authenticated email tag** in xray (`user` field in routing rules).
-vlessRoute was evaluated and rejected: markers are unauthenticated and add a per-connection toggle
-nobody needs (#3, #7). UUIDs are plain v4.
+vlessRoute was evaluated and rejected for forpost's privilege model: markers are unauthenticated and add a
+per-connection toggle nobody needs (#3, #7). UUIDs are plain v4 — no marker semantics on forpost's own
+inbound/links. One deliberate exception: the outbound **dial** to bastion carries the group-3 `0001`
+marker (derived in §6) — that is path selection on the bastion leg (bastion's own `vlessRoute` rule),
+not privilege enforcement; forpost is the sole holder of that UUID, so the marker adds no exposure.
 
 ## 2. Repo layout (#5, #6)
 
@@ -215,7 +218,8 @@ Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 ```
 
 `<privileged names>` = `forpost.users | selectattr('privileged') | map(attribute='name')`.
-The template asserts at render time: every user has `name` + `uuid`; names unique.
+The template asserts at render time: every user has `name` + `uuid`; names unique (the play
+validates uniqueness before render; the template enforces the per-user fields via `mandatory`).
 
 **No `dns` module.** Domain rules match by name; bastion resolves `bdgn.me` internally
 (its existing config already does, via 192.168.30.1), alwyzon resolves the rest.

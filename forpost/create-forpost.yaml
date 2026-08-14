@@ -53,9 +53,18 @@
           - forpost.users | length > 0
           - forpost.users | selectattr('name', 'undefined') | list | length == 0
           - forpost.users | selectattr('uuid', 'undefined') | list | length == 0
+          - forpost.users | selectattr('privileged', 'undefined') | list | length == 0
           - >-
             (forpost.users | map(attribute='name') | list | length)
             == (forpost.users | map(attribute='name') | unique | list | length)
+          # canonical dashed uuids: the template derives the bastion marker
+          # by splitting on '-'; xray also accepts dashless forms (research Q5)
+          - >-
+            (forpost.users | map(attribute='uuid')
+               | select('match', '^[0-9a-fA-F-]{36}$') | list | length)
+            == forpost.users | length
+          - forpost.users | selectattr('privileged') | list | length > 0
+            # empty privileged list would make the bastion rules match everyone
           - forpost.alwyzon is defined
           - forpost.alwyzon.address | length > 0
           - forpost.alwyzon.port | int > 0
@@ -66,7 +75,7 @@
           - forpost.bastion is defined
           - forpost.bastion.address | length > 0
           - forpost.bastion.port | int > 0
-          - forpost.bastion.uuid | length > 0
+          - forpost.bastion.uuid is match('^[0-9a-fA-F-]{36}$')
           - forpost.bastion.server_name | length > 0
           - forpost.bastion.public_key | length > 0
           - forpost.bastion.short_id | length > 0
