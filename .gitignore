@@ -29,3 +29,10 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+
+# Live node configs rendered with real credentials — never commit
+# (history was scrubbed of these; keep them local-only)
+**/xray-config_old.json
+vm-callback/server.jsonc
+**/server.live.jsonc
+**/xray-config.live.json
