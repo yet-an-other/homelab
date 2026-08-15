@@ -18,7 +18,7 @@ This is a homelab infrastructure-as-code repository that automates deployment of
    - `vm-nginx-dmz/`: DMZ nginx with xray proxy and stream configs
    - `vm-nginx-vip/`: VIP nginx with keepalived, WireGuard, HAProxy for Proxmox access
 
-3. **Kubernetes Cluster** (`vms-k8s/`): Production-grade HA cluster
+ . **Kubernetes Cluster** (`vms-k8s/`): Production-grade HA cluster
    - 3 control-plane + 3 worker nodes with stacked etcd
    - Keepalived + HAProxy for load balancing (no MetalLB)
    - Flannel CNI, Longhorn storage
@@ -51,12 +51,8 @@ Template for inventory: `ansible/template-proxmox-inventory.yaml`
 ./apply.sh lxc-<name>
 # Example:
 ./apply.sh lxc-ntfy
-
-# Expands to:
-ansible-playbook -i ansible/inventory.secret.yaml lxc-<name>/create-lxc-<name>.yaml
-```
-
-### Kubernetes Cluster
+# Expands to: ansible-playbook -i ansible/inventory.secret.yaml lxc-<name>/create-lxc-<name>.yaml ```
+## Kubernetes Cluster
 
 #### Full Proxmox Deployment
 ```bash
@@ -169,3 +165,13 @@ All `lxc-*/create-lxc-*.yaml` playbooks follow:
 - **Storage**: Longhorn (K8s), Ceph (Proxmox)
 - **Observability**: Prometheus, Grafana, Loki, Tempo, Alloy
 - **Security**: cert-manager, Zitadel (OIDC), OAuth2-proxy
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in the repo's GitHub Issues via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: one root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
