@@ -82,7 +82,8 @@ proxmox:
 #       bastion:                # forpost's CLIENT credentials on bastion's xray
 #         address: ""           # externally-reachable bastion xray endpoint
 #         port: 443
-#         uuid: ""
+#         uuid: ""              # plain v4 as registered on bastion; the play derives the
+#                                # group-3 0001 marker for the dial (SPEC §6) — store it UNmarked
 #         server_name: ""
 #         public_key: ""
 #         short_id: "01"

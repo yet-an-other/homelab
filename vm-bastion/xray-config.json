@@ -1,16 +1,18 @@
 {
     "log": {
-        "loglevel": "debug",
+        "loglevel": "warning",
         "access": "/var/log/xray/access.log",
         "error": "/var/log/xray/error.log"
       },
     "dns": {
+        "tag": "dns-in",
         "servers": [
             {
                 "address": "192.168.30.1",
                 "domains": [
                     "domain:bdgn.me"
-                ]
+                ],
+                "skipFallback": true
             },
             "1.1.1.1",
             "8.8.8.8"
@@ -165,6 +167,11 @@
     "routing": {
         "domainStrategy": "IPIfNonMatch",
         "rules": [
+          {
+              "type": "field",
+              "inboundTag": ["dns-in"],
+              "outboundTag": "wg-in"
+          },
           {
               "type": "field",
               "ip": ["192.168.0.0/16"],

@@ -1,11 +1,14 @@
 #cloud-config
-# forpost user-data — slim, reachability-only bootstrap shim (SPEC §7).
+# forpost user-data -- slim, reachability-only bootstrap shim (SPEC section 7).
 # Paste this as user-data when creating the cloud VM. It only guarantees the
 # node is reachable by Ansible on port 42318 as user `ib`; everything else is
 # delivered by ./apply.sh forpost (units/ are the contract, 10-user-sshd.sh
 # re-asserts all of this).
 #
 # No repo clone, no credentials, no script embedding.
+#
+# NOTE: keep this file pure ASCII -- it is pasted through web consoles that
+# mangle UTF-8, and cloud-init's YAML parser then rejects the whole document.
 
 users:
   - name: ib

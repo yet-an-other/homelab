@@ -1,51 +1,55 @@
 #!/bin/bash
 #
-# 20-shell.sh — oh-my-zsh, powerlevel10k, zsh-syntax-highlighting, dotfiles.
-# Mirrors the shell part of cloud-init/cloud-init-ubuntu.yaml.
-# Guard: `[ ! -d .../.git ]` per clone (existing repo pattern).
+# 20-shell.sh — zsh environment (SPEC §4).
+#
+# oh-my-zsh + powerlevel10k + zsh-syntax-highlighting, dotfiles clone, and
+# the .zshrc / .p10k.zsh symlinks. Replica of the shell section of
+# cloud-init/cloud-init-ubuntu.yaml.
+#
+# Idempotency guard: clones are skipped when the target .git dir exists
+# (the existing `[ ! -d …/.git ]` pattern); symlinks are `ln -sfn`.
 #
 set -euo pipefail
 
-USER_NAME="ib"
-USER_HOME="/home/${USER_NAME}"
-USER_GROUP="$(id -gn "${USER_NAME}")"
-DOTFILES_DIR="${USER_HOME}/.dotfiles"
-ZSHRC_SOURCE="${DOTFILES_DIR}/zsh-ssh/.zshrc"
-P10K_SOURCE="${DOTFILES_DIR}/zsh-ssh/.p10k.zsh"
+user_name="ib"
+user_home="/home/${user_name}"
+dotfiles_dir="${user_home}/.dotfiles"
+zshrc_source="${dotfiles_dir}/zsh-ssh/.zshrc"
+p10k_source="${dotfiles_dir}/zsh-ssh/.p10k.zsh"
 
 run_as_user() {
-  sudo -u "${USER_NAME}" -H bash -lc "$1"
+  sudo -u "${user_name}" -H bash -lc "$1"
 }
 
-if [ ! -d "${USER_HOME}/.oh-my-zsh/.git" ]; then
-  run_as_user "git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git '${USER_HOME}/.oh-my-zsh'"
+if [ ! -d "${user_home}/.oh-my-zsh/.git" ]; then
+  run_as_user "git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git '${user_home}/.oh-my-zsh'"
 fi
 
-install -d -m 0755 -o "${USER_NAME}" -g "${USER_GROUP}" "${USER_HOME}/.oh-my-zsh/custom/themes"
-install -d -m 0755 -o "${USER_NAME}" -g "${USER_GROUP}" "${USER_HOME}/.oh-my-zsh/custom/plugins"
+install -d -m 0755 -o "${user_name}" -g "$(id -gn "${user_name}")" \
+  "${user_home}/.oh-my-zsh/custom/themes" \
+  "${user_home}/.oh-my-zsh/custom/plugins"
 
-if [ ! -d "${USER_HOME}/.oh-my-zsh/custom/themes/powerlevel10k/.git" ]; then
-  run_as_user "git clone --depth 1 https://github.com/romkatv/powerlevel10k.git '${USER_HOME}/.oh-my-zsh/custom/themes/powerlevel10k'"
+if [ ! -d "${user_home}/.oh-my-zsh/custom/themes/powerlevel10k/.git" ]; then
+  run_as_user "git clone --depth 1 https://github.com/romkatv/powerlevel10k.git '${user_home}/.oh-my-zsh/custom/themes/powerlevel10k'"
 fi
 
-if [ ! -d "${USER_HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/.git" ]; then
-  run_as_user "git clone --depth 1 https://github.com/zsh-users/zsh-syntax-highlighting.git '${USER_HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting'"
+if [ ! -d "${user_home}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/.git" ]; then
+  run_as_user "git clone --depth 1 https://github.com/zsh-users/zsh-syntax-highlighting.git '${user_home}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting'"
 fi
 
-if [ ! -d "${DOTFILES_DIR}/.git" ]; then
-  run_as_user "git clone --branch main --depth 1 https://github.com/yet-an-other/dotfiles.git '${DOTFILES_DIR}'"
+if [ ! -d "${dotfiles_dir}/.git" ]; then
+  run_as_user "git clone --branch main --depth 1 https://github.com/yet-an-other/dotfiles.git '${dotfiles_dir}'"
 fi
 
-if [ ! -f "${ZSHRC_SOURCE}" ]; then
-  echo "missing dotfiles source: ${ZSHRC_SOURCE}" >&2
-  exit 1
-fi
+for source in "${zshrc_source}" "${p10k_source}"; do
+  if [ ! -f "${source}" ]; then
+    echo "20-shell: missing dotfiles source: ${source}" >&2
+    exit 1
+  fi
+done
 
-if [ ! -f "${P10K_SOURCE}" ]; then
-  echo "missing dotfiles source: ${P10K_SOURCE}" >&2
-  exit 1
-fi
+run_as_user "ln -sfn '${zshrc_source}' '${user_home}/.zshrc'"
+run_as_user "ln -sfn '${p10k_source}' '${user_home}/.p10k.zsh'"
+chown -h "${user_name}:$(id -gn "${user_name}")" "${user_home}/.zshrc" "${user_home}/.p10k.zsh"
 
-run_as_user "ln -sfn '${ZSHRC_SOURCE}' '${USER_HOME}/.zshrc'"
-run_as_user "ln -sfn '${P10K_SOURCE}' '${USER_HOME}/.p10k.zsh'"
-chown -h "${USER_NAME}:${USER_GROUP}" "${USER_HOME}/.zshrc" "${USER_HOME}/.p10k.zsh"
+echo "20-shell: zsh environment in place"

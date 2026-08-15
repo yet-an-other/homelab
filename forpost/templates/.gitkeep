@@ -1,0 +1,2 @@
+# Templates land with the VPN-layer tickets (SPEC §6-§7): xray-config.json.j2,
+# nginx.conf.j2, default.conf.j2, fallback.conf.j2 (#10 and later).

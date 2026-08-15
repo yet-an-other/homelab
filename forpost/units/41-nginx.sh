@@ -1,54 +1,81 @@
 #!/bin/bash
 #
-# 41-nginx.sh — place the rendered nginx configs, verify, reload.
+# 41-nginx.sh — the nginx entry (SPEC §5/§7, issue #13).
 #
-# The play renders templates into /etc/nginx/.forpost-staging/ before this unit
-# runs; this unit never templates — it places, verifies (nginx -t), restarts.
+# Ubuntu ships the stream module separately (libnginx-mod-stream); the http
+# block, SNI-map stream block, 418 default site and fallback vhost are
+# rendered by the play into staging and PLACED by this unit — units place,
+# verify, restart (SPEC §2). Validates with nginx -t before touching the
+# running service; reloads only when a placed file changed.
+#
+# Idempotency guards: package presence, content compares per file.
 #
 set -euo pipefail
 
-STAGING="/etc/nginx/.forpost-staging"
-CHANGED=0
+export DEBIAN_FRONTEND=noninteractive
+
+forpost_home="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+staging="${forpost_home}/nginx"
+
+changed=0
+
+# --- nginx + stream module --------------------------------------------------
+# Installed here (not only in 00-packages) so the play can bring nginx up
+# FIRST via `bootstrap.sh --only 41` — even on a fresh node — before unit
+# 40 restarts xray behind it.
+
+if ! dpkg -s nginx >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y nginx
+fi
+
+if ! dpkg -s libnginx-mod-stream >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y libnginx-mod-stream
+  changed=1
+fi
+
+# --- cert sanity --------------------------------------------------------------
+
+if [ ! -s /usr/ssl/fullchain.crt ] || [ ! -s /usr/ssl/certificate.key ]; then
+  echo "41-nginx: /usr/ssl cert missing — the play issues it before units run" >&2
+  exit 1
+fi
+
+# --- place rendered confs -----------------------------------------------------
 
 place() {
   local src="$1"
   local dest="$2"
   if [ ! -f "${src}" ]; then
-    echo "missing staged config: ${src} (the play renders it before this unit runs)" >&2
+    echo "41-nginx: missing staged file: ${src}" >&2
     exit 1
   fi
-  if [ ! -f "${dest}" ] || ! cmp -s "${src}" "${dest}"; then
-    install -m 0644 "${src}" "${dest}"
-    CHANGED=1
-    echo "placed ${dest}"
+  if [ -f "${dest}" ] && cmp -s "${src}" "${dest}"; then
+    echo "41-nginx: ${dest} already in place"
+  else
+    install -m 0644 -o root -g root "${src}" "${dest}"
+    changed=1
+    echo "41-nginx: placed ${dest}"
   fi
 }
 
-# ---- stream module (ubuntu ships it as a dynamic module) --------------------------
-if ! nginx -V 2>&1 | grep -q 'with-stream'; then
-  if [ ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]; then
-    apt-get update
-    apt-get install -y libnginx-mod-stream
-  fi
-fi
-
 install -d -m 0755 /etc/nginx/conf.d
+place "${staging}/nginx.conf" /etc/nginx/nginx.conf
+place "${staging}/default.conf" /etc/nginx/conf.d/default.conf
+place "${staging}/fallback.conf" /etc/nginx/conf.d/fallback.conf
 
-place "${STAGING}/nginx.conf" /etc/nginx/nginx.conf
-place "${STAGING}/default.conf" /etc/nginx/conf.d/default.conf
-place "${STAGING}/fallback.conf" /etc/nginx/conf.d/fallback.conf
+# --- validate + (re)start -----------------------------------------------------
 
 nginx -t
 
 systemctl enable nginx
 if ! systemctl is-active --quiet nginx; then
   systemctl start nginx
-  echo "nginx started"
-elif [ "${CHANGED}" -eq 1 ]; then
+  echo "41-nginx: nginx started"
+elif [ "${changed}" -eq 1 ]; then
   systemctl reload nginx
-  echo "nginx reloaded (config changed)"
+  echo "41-nginx: config changed, nginx reloaded"
 else
-  echo "nginx config unchanged; service already active"
+  echo "41-nginx: config unchanged, nginx left running"
 fi
-
-systemctl is-active --quiet nginx

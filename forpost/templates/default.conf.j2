@@ -1,11 +1,11 @@
-# Default site: anything that is not the Reality SNI lands here (418).
-# Frontgate pattern (frontgate/default.conf); cert issued via add-ssl-certificate.yaml.
+# Default site (SPEC §7): anything that isn't the Reality SNI lands here
+# via the stream SNI map's `default` and gets a 418.
 
 server {
         listen 127.0.0.1:20000 ssl default_server;
         http2 on;
 
-        server_name "" _;
+        server_name _;
 
         ssl_certificate /usr/ssl/fullchain.crt;
         ssl_certificate_key /usr/ssl/certificate.key;

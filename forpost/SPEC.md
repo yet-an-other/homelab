@@ -1,6 +1,6 @@
 # forpost — cloud VPN entry node
 
-Status: **implemented**. Every decision herein comes from the wayfinder map
+Status: **created**. 
 ([issue #2](https://github.com/yet-an-other/homelab/issues/2)) and its resolved tickets
 ([#3](https://github.com/yet-an-other/homelab/issues/3),
 [#5](https://github.com/yet-an-other/homelab/issues/5),
@@ -27,8 +27,11 @@ client ──VLESS+Reality──> forpost ──VLESS+Reality──> alwyzon ─
 ```
 
 Privilege is enforced by the **authenticated email tag** in xray (`user` field in routing rules).
-vlessRoute was evaluated and rejected: markers are unauthenticated and add a per-connection toggle
-nobody needs (#3, #7). UUIDs are plain v4.
+vlessRoute was evaluated and rejected for forpost's privilege model: markers are unauthenticated and add a
+per-connection toggle nobody needs (#3, #7). UUIDs are plain v4 — no marker semantics on forpost's own
+inbound/links. One deliberate exception: the outbound **dial** to bastion carries the group-3 `0001`
+marker (derived in §6) — that is path selection on the bastion leg (bastion's own `vlessRoute` rule),
+not privilege enforcement; forpost is the sole holder of that UUID, so the marker adds no exposure.
 
 ## 2. Repo layout (#5, #6)
 
@@ -39,7 +42,8 @@ forpost/
 ├── bootstrap.sh             # entrypoint: runs units in lexical order
 ├── units/                   # idempotent, numbered; the source of truth for node state
 │   ├── lib/
-│   │   └── install-xray.sh  # vendored copy of frontgate/install-xray.sh
+│   │   ├── install-xray.sh  # vendored copy of frontgate/install-xray.sh
+│   │   └── zmx-select.sh    # vendored copy of cloud-init/zmx-select.sh
 │   ├── 00-packages.sh
 │   ├── 01-unattended-upgrades.sh
 │   ├── 10-user-sshd.sh
@@ -65,8 +69,10 @@ arch-aware via `dpkg --print-architecture` (x86_64 primary, arm64 supported).
 `bootstrap.sh`: `set -euo pipefail`; runs `units/[0-9][0-9]-*.sh` in order; supports
 `--only <NN|name>` and `--from <NN>` for iteration; logs per-unit to `/var/log/forpost/`.
 
-Staging path on the node: `/usr/local/sbin/forpost/` (bootstrap + units), templates rendered by the
-play directly to their final destinations (xray config, nginx confs) before the corresponding unit runs.
+Staging path on the node: `/usr/local/sbin/forpost/` (bootstrap + units). Templates are rendered by the
+play before the corresponding unit runs: the xray config directly to its final destination
+(`/usr/local/etc/xray/config.json`); the nginx confs into staging under `/usr/local/sbin/forpost/nginx/` —
+`41-nginx.sh` places them (units place, verify, restart, §5).
 
 ## 3. Secrets (#6)
 
@@ -132,7 +138,7 @@ the reference; the units are the executable source of truth.
 | `20-shell.sh` | oh-my-zsh, powerlevel10k, zsh-syntax-highlighting; clone `yet-an-other/dotfiles`; symlink `.zshrc`, `.p10k.zsh` | `[ ! -d …/.git ]` (existing pattern) |
 | `21-fonts.sh` | JetBrainsMono Nerd Font → `~/.local/share/fonts`, `fc-cache` | archive presence / reinstall-safe |
 | `30-editor.sh` | neovim latest tarball → `/opt/nvim-linux-<arch>`, symlink `/usr/local/bin/nvim`; LazyVim starter; keymaps.lua symlink from dotfiles | version/arch detection |
-| `31-tools.sh` | eza (apt or latest `.deb` by arch, existing `install_eza` pattern); zmx tarball by arch → `/usr/local/bin` | `command -v` / version check |
+| `31-tools.sh` | eza (apt or latest `.deb` by arch, existing `install_eza` pattern); zmx tarball by arch → `/usr/local/bin`; zmx-select.sh session picker → `/opt/zmx-select.sh` | `command -v` / version check; file content compare |
 
 `10-user-sshd.sh` re-asserts what user-data already did minimally — intentional: user-data is a
 bootstrap shim (§7), the unit is the contract.
@@ -149,6 +155,13 @@ The xray config and nginx confs are rendered by the play (§9) from `templates/`
 units never template — they place, verify, restart.
 
 ## 6. xray configuration (#3, #7)
+
+Rolled out in slices: #10 + #13 landed the inbound (127.0.0.1:20001 behind the
+nginx SNI map, `dest` = the local fallback vhost); #11 chained the catch-all via
+alwyzon; #12 landed the full routing table below (bastion outbound, privileged
+split, blocked rule; freedom kept last, unused, for debugging). `dest` must
+always be a live TLS 1.3 endpoint — xray mirrors dest's handshake even for
+authenticated clients (post-mortem in #10).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 
@@ -187,13 +200,22 @@ Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
    xtls-rprx-vision`, `streamSettings`: tcp + reality (`serverName`, `fingerprint: chrome`,
    `publicKey`, `shortId`). Field name note: newer xray renames outbound `publicKey` → `password`;
    match the pinned xray version (`docs/research/xray-vlessroute.md` Q4).
-2. `bastion`: same shape from `forpost.bastion.*`.
+2. `bastion`: same shape from `forpost.bastion.*`. The outbound dials with the
+   group-3 `0001` marker derived from the registered UUID — bastion's `vlessRoute: "1"`
+   rule gates internal-IP routing on that marker (wg-in); auth ignores group 3
+   (`docs/research/xray-vlessroute.md` Q1).
 3. `blocked`: `blackhole`, `settings.response.type: "none"`.
+4. `dns-internal`: Xray's `dns` outbound. It feeds privileged clients' intercepted A/AAAA
+   queries into the built-in split-horizon DNS module.
+5. `direct`: `freedom`, deliberately unused and last (debugging aid).
 
 **Routing** (top-to-bottom, first match; `domainStrategy: "AsIs"`):
 
 ```json
 "rules": [
+  { "type": "field", "inboundTag": ["dns-query"], "ip": ["192.168.30.1/32"], "outboundTag": "bastion" },
+  { "type": "field", "inboundTag": ["dns-query"],                                 "outboundTag": "alwyzon" },
+  { "type": "field", "user": [<privileged names>], "port": "53", "network": "udp,tcp", "outboundTag": "dns-internal" },
   { "type": "field", "user": [<privileged names>], "domain": ["domain:bdgn.me"],   "outboundTag": "bastion" },
   { "type": "field", "user": [<privileged names>], "ip": ["192.168.0.0/16"],        "outboundTag": "bastion" },
   { "type": "field",                                 "ip": ["192.168.0.0/16"],        "outboundTag": "blocked" },
@@ -202,10 +224,17 @@ Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 ```
 
 `<privileged names>` = `forpost.users | selectattr('privileged') | map(attribute='name')`.
-The template asserts at render time: every user has `name` + `uuid`; names unique.
+The template asserts at render time: every user has `name` + `uuid`; names unique (the play
+validates uniqueness before render; the template enforces the per-user fields via `mandatory`).
 
-**No `dns` module.** Domain rules match by name; bastion resolves `bdgn.me` internally
-(its existing config already does, via 192.168.30.1), alwyzon resolves the rest.
+**DNS override.** For privileged authenticated users, any traditional DNS request carried by
+the tunnel (UDP/TCP port 53, regardless of whether the client addressed 1.1.1.1, 8.8.8.8, etc.)
+is intercepted by `dns-internal`. The built-in DNS module sends `domain:bdgn.me` to
+`192.168.30.1` with `skipFallback: true`; its tagged query routes via the marked bastion outbound.
+Other names use `1.1.1.1` via alwyzon. Non-privileged clients bypass the override. Xray 26.3.27's
+DNS outbound uses the legacy `nonIPQuery` settings and resolves A/AAAA through the module; the
+newer documented `rewriteAddress`/`rules` fields are silently ignored by this pinned build.
+Ordinary proxied domains are still resolved by bastion or alwyzon.
 
 **UDP policy**: `xtls-rprx-vision` blocks UDP/443 (QUIC) deliberately — clients fall back to TCP.
 No Mux server-side.
@@ -269,6 +298,17 @@ vless://<uuid>@<domain>:443?security=reality&sni=<server_name>&fp=chrome&pbk=<re
 
 `pbk` derived from `forpost.private_key` via `xray x25519 -i`. UUIDs are plain v4 — no marker semantics.
 
+**Client DNS (split horizon).** `*.bdgn.me` is a split-horizon zone: internal-only names
+(`syncthing`, `s3`, `speed-test`, …) exist ONLY on the internal resolver `192.168.30.1` — public
+resolvers NXDOMAIN them, and public-record names resolve to frontgate's public entry. For a
+privileged client whose traditional DNS traffic traverses the VPN, forpost transparently
+intercepts UDP/TCP port 53 and resolves `bdgn.me` through `192.168.30.1`; the configured resolver
+address (1.1.1.1, 8.8.8.8, etc.) therefore does not matter. The override cannot intercept encrypted
+DNS (DoH/DoT/DoQ on 443/853) or DNS deliberately sent outside the VPN. Such clients must disable
+Private/Encrypted DNS or set their remote/VPN DNS to `192.168.30.1`. Non-privileged users retain
+their configured public resolver and still cannot reach internal IPs. Clients that pass domains
+through the tunnel (socks5h-style) use bastion's scoped internal DNS module instead.
+
 ## 9. The play: `create-forpost.yaml` (#6)
 
 `hosts: forpost` (the secret-inventory host entry). Run via `./apply.sh forpost` — unchanged.
@@ -277,9 +317,11 @@ vless://<uuid>@<domain>:443?security=reality&sni=<server_name>&fp=chrome&pbk=<re
 2. cert for `forpost.domain` via `import_tasks: ../ansible/add-ssl-certificate.yaml`
 3. push `bootstrap.sh` + `units/` → `/usr/local/sbin/forpost/` (mode 0755)
 4. render `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`
-5. render `templates/{nginx.conf,default.conf,fallback.conf}.j2` → staging under `/etc/nginx/`
-6. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
-7. verify: `wait_for port 443`, `systemctl is-active xray nginx`
+5. render `templates/{nginx.conf,default.conf,fallback.conf}.j2` → staging under `/usr/local/sbin/forpost/nginx/`
+6. nginx first: `bootstrap.sh --only 41` brings the fallback vhost up BEFORE any xray restart — xray
+   mirrors dest's handshake even for authenticated clients, so xray-first ordering drops clients (#10)
+7. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
+8. verify: `wait_for port 443`, `systemctl is-active xray nginx`, ufw lockdown (42318 + 443/tcp only)
 
 Re-running the play on a live node must be a no-op when nothing changed (idempotency, #5).
 

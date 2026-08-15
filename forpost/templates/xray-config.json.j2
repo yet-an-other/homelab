@@ -1,143 +1,206 @@
 {#-
-  forpost xray config — rendered by create-forpost.yaml to /usr/local/etc/xray/config.json.
+  xray-config.json.j2 — forpost xray config (SPEC §6).
 
-  Render-time contract (SPEC §6): every user has name + uuid; names unique.
-  The 1/0 below only renders (and fails) when a check is violated.
+  #10..#13 landed the inbound + nginx entry; #11 chained the catch-all via
+  alwyzon. #12 (this config): the full routing table — the bastion outbound
+  and the privileged split. Privilege is the AUTHENTICATED email tag
+  (SPEC §1): privileged users get domain:bdgn.me and 192.168.0.0/16 via
+  bastion; 192.168.0.0/16 is blocked for everyone else; everything else
+  (incl. non-privileged bdgn.me — the domain has public records) goes to
+  alwyzon. Outbound order: alwyzon, bastion, blocked — defense-in-depth;
+  freedom stays last, unused, as a debugging aid. The DNS module only
+  handles privileged clients' hijacked A/AAAA queries; bastion and alwyzon
+  resolve ordinary proxied traffic (SPEC §6).
+
+  #12 + DNS hijack: privileged users' plain-DNS queries (UDP/TCP 53, any
+  # resolver — 1.1.1.1 included) enter the `dns-internal` outbound. In the
+  # pinned xray 26.3.27, that outbound resolves A/AAAA via the built-in DNS
+  # module: bdgn.me uses 192.168.30.1, and the tagged module query is routed
+  # through bastion; other names use 1.1.1.1 through alwyzon. Thus client DNS
+  # settings stop mattering for the split-horizon zone. DoH/DoT (853/443)
+  # can't be caught this way — those clients still need remote DNS
+  # 192.168.30.1.
+  # The sniff-rewrite (dropping routeOnly) is deliberately NOT enabled yet:
+  # it would send sniffed domains to bastion's dns module, which is broken
+  # until the 159c2c2 fix is deployed there.
+
+  The inbound sits behind the nginx SNI map (#13): nginx owns public 443
+  and ssl_prereads the SNI here. The reality `dest` (127.0.0.1:8443) is the
+  nginx fallback vhost. dest MUST be a live TLS 1.3 endpoint: current xray
+  mirrors dest's handshake even for fully authenticated clients — a dead
+  dest kills valid sessions too (diagnosed in #10).
+
+  Outbound reality field naming: the pinned xray (v26.3.27) renamed the
+  client-side publicKey field to `password` — the value is the upstream's
+  x25519 PUBLIC key — and `network` tcp to `raw` (tcp still accepted).
+  The flat outbound form (no vnext) is current; vnext still works.
+  (research: docs/research/xray-vlessroute.md Q4)
+
+  Rendered by create-forpost.yaml to /usr/local/etc/xray/config.json before
+  units run; 40-xray.sh validates (`xray -test`) and restarts on change.
 -#}
+{%- set clients = [] -%}
 {%- for u in forpost.users -%}
-{%- if u.name is undefined or u.name | length == 0 or u.uuid is undefined or u.uuid | length == 0 -%}
-{{ 1/0 }}{# ERROR: every forpost user must have a non-empty name and uuid #}
-{%- endif -%}
+  {#- SPEC §6 render-time assert: every user has name + uuid -#}
+  {%- set _ = clients.append({"id": u.uuid | mandatory("forpost user is missing uuid"), "flow": "xtls-rprx-vision", "email": u.name | mandatory("forpost user is missing name")}) -%}
 {%- endfor -%}
-{%- set names = forpost.users | map(attribute='name') | list -%}
-{%- if names | length != names | unique | list | length -%}
-{{ 1/0 }}{# ERROR: forpost user names must be unique #}
-{%- endif -%}
 {%- set privileged = forpost.users | selectattr('privileged') | map(attribute='name') | list -%}
-{
-    "log": {
-        "loglevel": "warning",
-        "access": "/var/log/xray/access.log",
-        "error": "/var/log/xray/error.log"
-    },
-    "inbounds": [
-        {
-            "tag": "vless-reality",
-            "listen": "127.0.0.1",
-            "port": 20001,
-            "protocol": "vless",
-            "settings": {
-                "clients": [
-{%- for u in forpost.users %}
-                    {
-                        "id": "{{ u.uuid }}",
-                        "flow": "xtls-rprx-vision",
-                        "email": "{{ u.name }}"
-                    }{{ "," if not loop.last }}
-{%- endfor %}
-                ],
-                "decryption": "none"
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "dest": "127.0.0.1:8443",
-                    "serverNames": [
-                        "{{ forpost.server_name }}"
-                    ],
-                    "privateKey": "{{ forpost.private_key }}",
-                    "shortIds": {{ forpost.short_ids | to_json }}
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls"],
-                "routeOnly": true
-            }
+{#- Bastion routes internal IPs (192.168/16) via wg-in only for UUIDs
+    carrying the vlessRoute "1" marker (group 3 = 0001). xray auth ignores
+    group 3 (research Q1), so the plain registered UUID authenticates; the
+    marker only selects the internal path. Derived here so the secrets hold
+    the true registered credential. -#}
+{%- set bu = forpost.bastion.uuid.split('-') -%}
+{%- set bastion_marked_uuid = bu[0] ~ '-' ~ bu[1] ~ '-0001-' ~ bu[3] ~ '-' ~ bu[4] -%}
+{%- set config = {
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
+  },
+  "dns": {
+    "tag": "dns-query",
+    "servers": [
+      {
+        "address": "192.168.30.1",
+        "domains": ["domain:bdgn.me"],
+        "skipFallback": true
+      },
+      "1.1.1.1"
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "vless-reality",
+      "listen": "127.0.0.1",
+      "port": 20001,
+      "protocol": "vless",
+      "settings": {
+        "clients": clients,
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "127.0.0.1:8443",
+          "serverNames": [forpost.server_name],
+          "privateKey": forpost.private_key,
+          "shortIds": forpost.short_ids
         }
-    ],
-    "outbounds": [
-        {
-            "tag": "alwyzon",
-            "protocol": "vless",
-            "settings": {
-                "address": "{{ forpost.alwyzon.address }}",
-                "port": {{ forpost.alwyzon.port | int }},
-                "id": "{{ forpost.alwyzon.uuid }}",
-                "encryption": "none",
-                "flow": "xtls-rprx-vision"
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "serverName": "{{ forpost.alwyzon.server_name }}",
-                    "fingerprint": "chrome",
-                    "password": "{{ forpost.alwyzon.public_key }}",
-                    "shortId": "{{ forpost.alwyzon.short_id }}"
-                }
-            }
-        },
-        {
-            "tag": "bastion",
-            "protocol": "vless",
-            "settings": {
-                "address": "{{ forpost.bastion.address }}",
-                "port": {{ forpost.bastion.port | int }},
-                "id": "{{ forpost.bastion.uuid }}",
-                "encryption": "none",
-                "flow": "xtls-rprx-vision"
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "serverName": "{{ forpost.bastion.server_name }}",
-                    "fingerprint": "chrome",
-                    "password": "{{ forpost.bastion.public_key }}",
-                    "shortId": "{{ forpost.bastion.short_id }}"
-                }
-            }
-        },
-        {
-            "tag": "blocked",
-            "protocol": "blackhole",
-            "settings": {
-                "response": {
-                    "type": "none"
-                }
-            }
-        }
-    ],
-    "routing": {
-        "domainStrategy": "AsIs",
-        "rules": [
-{%- if privileged | length > 0 %}
-            {
-                "type": "field",
-                "user": {{ privileged | to_json }},
-                "domain": ["domain:bdgn.me"],
-                "outboundTag": "bastion"
-            },
-            {
-                "type": "field",
-                "user": {{ privileged | to_json }},
-                "ip": ["192.168.0.0/16"],
-                "outboundTag": "bastion"
-            },
-{%- endif %}
-            {
-                "type": "field",
-                "ip": ["192.168.0.0/16"],
-                "outboundTag": "blocked"
-            },
-            {
-                "type": "field",
-                "network": "tcp,udp",
-                "outboundTag": "alwyzon"
-            }
-        ]
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"],
+        "routeOnly": true
+      }
     }
-}
+  ],
+  "outbounds": [
+    {
+      "tag": "alwyzon",
+      "protocol": "vless",
+      "settings": {
+        "address": forpost.alwyzon.address | mandatory("forpost.alwyzon.address is required"),
+        "port": forpost.alwyzon.port | mandatory("forpost.alwyzon.port is required"),
+        "id": forpost.alwyzon.uuid | mandatory("forpost.alwyzon.uuid is required"),
+        "encryption": "none",
+        "flow": "xtls-rprx-vision"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": forpost.alwyzon.server_name | mandatory("forpost.alwyzon.server_name is required"),
+          "fingerprint": "chrome",
+          "password": forpost.alwyzon.public_key | mandatory("forpost.alwyzon.public_key is required"),
+          "shortId": forpost.alwyzon.short_id | mandatory("forpost.alwyzon.short_id is required")
+        }
+      }
+    },
+    {
+      "tag": "bastion",
+      "protocol": "vless",
+      "settings": {
+        "address": forpost.bastion.address | mandatory("forpost.bastion.address is required"),
+        "port": forpost.bastion.port | mandatory("forpost.bastion.port is required"),
+        "id": bastion_marked_uuid,
+        "encryption": "none",
+        "flow": "xtls-rprx-vision"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": forpost.bastion.server_name | mandatory("forpost.bastion.server_name is required"),
+          "fingerprint": "chrome",
+          "password": forpost.bastion.public_key | mandatory("forpost.bastion.public_key is required"),
+          "shortId": forpost.bastion.short_id | mandatory("forpost.bastion.short_id is required")
+        }
+      }
+    },
+    {
+      "tag": "blocked",
+      "protocol": "blackhole",
+      "settings": { "response": { "type": "none" } }
+    },
+    {
+      "tag": "dns-internal",
+      "protocol": "dns",
+      "settings": {
+        "nonIPQuery": "reject"
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["dns-query"],
+        "ip": ["192.168.30.1/32"],
+        "outboundTag": "bastion"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["dns-query"],
+        "outboundTag": "alwyzon"
+      },
+      {
+        "type": "field",
+        "user": privileged,
+        "network": "udp,tcp",
+        "port": "53",
+        "outboundTag": "dns-internal"
+      },
+      {
+        "type": "field",
+        "user": privileged,
+        "domain": ["domain:bdgn.me"],
+        "outboundTag": "bastion"
+      },
+      {
+        "type": "field",
+        "user": privileged,
+        "ip": ["192.168.0.0/16"],
+        "outboundTag": "bastion"
+      },
+      {
+        "type": "field",
+        "ip": ["192.168.0.0/16"],
+        "outboundTag": "blocked"
+      },
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": "alwyzon"
+      }
+    ]
+  }
+} -%}
+{{ config | to_nice_json }}

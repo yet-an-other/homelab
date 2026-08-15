@@ -1,9 +1,3 @@
-# forpost nginx main config — rendered by create-forpost.yaml.
-# Frontgate arrangement (frontgate/nginx.conf is the reference), trimmed to the
-# single live inbound; the SNI map anticipates additional VLESS transports (fog, SPEC §12).
-
-include /etc/nginx/modules-enabled/*.conf;
-
 user  www-data;
 worker_processes auto;
 worker_rlimit_nofile 200000;
@@ -11,6 +5,8 @@ worker_rlimit_nofile 200000;
 error_log  /var/log/nginx/error.log notice;
 pid        /run/nginx.pid;
 
+# libnginx-mod-stream drops its load_module symlink here (41-nginx.sh installs it)
+include /etc/nginx/modules-enabled/*.conf;
 
 events {
     worker_connections  16384;
@@ -28,18 +24,18 @@ http {
     access_log  /var/log/nginx/access.log  main;
 
     sendfile        on;
-    #tcp_nopush     on;
 
     keepalive_timeout  65;
-
-    #gzip  on;
 
     include /etc/nginx/conf.d/*.conf;
 }
 
 
-## mod stream configuration
-##
+## stream: the client-facing 443 (frontgate arrangement, SPEC §7).
+## ssl_preread the SNI: the live VLESS+Reality inbound goes to xray,
+## everything else gets the 418 default site. The map anticipates more
+## inbounds (SPEC §12 fog: xhttp, tcp+tls).
+
 stream {
 
         log_format stream '$remote_addr - - [$time_local] $protocol '
@@ -52,19 +48,18 @@ stream {
 
         map $ssl_preread_server_name $upstream_map {
 
-                default                 main; # must be first entry
+                default                 main;
 
-                {{ forpost.server_name }}          vless-reality;
-                # future transports (xhttp, tcp+tls) get their own SNI entries here
+                {{ forpost.server_name }}     vless-reality;
         }
 
 
         upstream main {
-                server 127.0.0.1:20000; # default site
+                server 127.0.0.1:20000; # default site (418)
         }
 
         upstream vless-reality {
-                server 127.0.0.1:20001;
+                server 127.0.0.1:20001; # xray
         }
 
         server {

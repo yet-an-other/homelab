@@ -1,38 +1,51 @@
 #!/bin/bash
 #
-# 40-xray.sh — install xray-core, logrotate for /var/log/xray, enable and
-# (re)start the service when the rendered config changes.
+# 40-xray.sh — xray-core install + service (SPEC §5, issue #10).
 #
-# The config itself is rendered by the play into /usr/local/etc/xray/config.json
-# before this unit runs; this unit never templates — it verifies and restarts.
+# Runs the vendored lib/install-xray.sh (idempotent install/upgrade of
+# xray-core via the official XTLS installer), places logrotate for
+# /var/log/xray/*.log, validates the config rendered by the play
+# (/usr/local/etc/xray/config.json), and enables/starts the service —
+# restarting only when the config changed since the last applied stamp.
 #
-# Env knobs:
-#   FORPOST_XRAY_UPGRADE=1   run the installer even when xray is present
-#   FORPOST_XRAY_VERSION=vX  pin the install/upgrade to a specific release
-#
-# The pinned default below matters: the rendered config uses the renamed
-# outbound reality `password` field (formerly `publicKey`), which requires
-# xray >= the rename (SPEC §6, docs/research/xray-vlessroute.md Q4).
+# Idempotency guards: the installer is idempotent; logrotate config is
+# content-compared; restart is gated on the config mtime vs the stamp.
 #
 set -euo pipefail
 
-UNIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="/usr/local/etc/xray/config.json"
-MARKER="/usr/local/etc/xray/.config.sha256"
-LOGROTATE_CONF="/etc/logrotate.d/xray"
-XRAY_VERSION="${FORPOST_XRAY_VERSION:-v26.3.27}"
+export DEBIAN_FRONTEND=noninteractive
 
-# ---- install / upgrade ---------------------------------------------------------
-# Installs the pinned version on first boot; re-runs are a no-op unless an
-# upgrade is explicitly requested.
-if ! command -v xray >/dev/null 2>&1 || [ "${FORPOST_XRAY_UPGRADE:-0}" = "1" ]; then
-  "${UNIT_DIR}/lib/install-xray.sh" --version "${XRAY_VERSION}"
-else
-  echo "xray already installed (FORPOST_XRAY_UPGRADE=1 to upgrade to ${XRAY_VERSION})"
+unit_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+config="/usr/local/etc/xray/config.json"
+state_dir="/var/lib/forpost"
+stamp="${state_dir}/xray-config.stamp"
+logrotate_conf="/etc/logrotate.d/xray"
+
+# Pinned: the rendered config's field names (e.g. reality `password`) are
+# matched to this version — bump deliberately (SPEC §6, research Q4).
+xray_version="v26.3.27"
+
+# --- install / upgrade ----------------------------------------------------
+
+bash "${unit_dir}/lib/install-xray.sh" --version "${xray_version}"
+
+# The config logs to /var/log/xray (SPEC §6); make sure `xray -test` and the
+# service can open the files even on a fresh node.
+install -d -m 0755 /var/log/xray
+
+# --- logrotate --------------------------------------------------------------
+# The official installer seeds its own /etc/logrotate.d/xray (rotate 7, no
+# copytruncate — xray holds its log fds, so a rename-rotate would strand the
+# stream in the old file). We deliberately override it with copytruncate.
+
+if ! dpkg -s logrotate >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y logrotate
 fi
 
-# ---- logrotate ------------------------------------------------------------------
-read -r -d '' LOGROTATE <<'EOF' || true
+desired_logrotate="$(mktemp)"
+trap 'rm -f "${desired_logrotate}"' EXIT
+cat > "${desired_logrotate}" <<'EOF'
 /var/log/xray/*.log {
     daily
     rotate 14
@@ -44,28 +57,33 @@ read -r -d '' LOGROTATE <<'EOF' || true
 }
 EOF
 
-if [ ! -f "${LOGROTATE_CONF}" ] || [ "$(cat "${LOGROTATE_CONF}")" != "${LOGROTATE}" ]; then
-  printf '%s\n' "${LOGROTATE}" > "${LOGROTATE_CONF}"
-  chmod 0644 "${LOGROTATE_CONF}"
-  echo "wrote ${LOGROTATE_CONF}"
+if [ -f "${logrotate_conf}" ] && cmp -s "${desired_logrotate}" "${logrotate_conf}"; then
+  echo "40-xray: ${logrotate_conf} already in place"
+else
+  install -m 0644 -o root -g root "${desired_logrotate}" "${logrotate_conf}"
+  echo "40-xray: wrote ${logrotate_conf}"
 fi
 
-# ---- enable + restart on config change -------------------------------------------
-if [ ! -f "${CONFIG}" ]; then
-  echo "missing xray config: ${CONFIG} (the play renders it before this unit runs)" >&2
+# --- config + service -------------------------------------------------------
+
+if [ ! -f "${config}" ]; then
+  echo "40-xray: ${config} is missing — the play renders it before units run" >&2
   exit 1
 fi
 
-/usr/local/bin/xray run -test -c "${CONFIG}"
+/usr/local/bin/xray -test -config "${config}"
 
-SUM="$(sha256sum "${CONFIG}" | awk '{print $1}')"
+mkdir -p "${state_dir}"
 systemctl enable xray
-if [ ! -f "${MARKER}" ] || [ "$(cat "${MARKER}")" != "${SUM}" ] || ! systemctl is-active --quiet xray; then
-  systemctl restart xray
-  printf '%s' "${SUM}" > "${MARKER}"
-  echo "xray restarted (config changed or service was down)"
-else
-  echo "xray config unchanged; service already active"
-fi
 
-systemctl is-active --quiet xray
+if ! systemctl is-active --quiet xray; then
+  systemctl start xray
+  touch -r "${config}" "${stamp}"
+  echo "40-xray: xray started"
+elif [ ! -f "${stamp}" ] || [ "${config}" -nt "${stamp}" ]; then
+  systemctl restart xray
+  touch -r "${config}" "${stamp}"
+  echo "40-xray: config changed, xray restarted"
+else
+  echo "40-xray: config unchanged, xray left running"
+fi

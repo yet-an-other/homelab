@@ -1,24 +1,31 @@
 #!/bin/bash
 #
-# 01-unattended-upgrades.sh — enable automatic security updates.
-# Guard: only write the config when its content differs.
+# 01-unattended-upgrades.sh — automatic security updates (SPEC §4).
+#
+# Idempotency guard: the 20auto-upgrades config is only (re)written when its
+# content differs.
 #
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-CONF="/etc/apt/apt.conf.d/20auto-upgrades"
+auto_upgrades="/etc/apt/apt.conf.d/20auto-upgrades"
 
-read -r -d '' CONTENT <<'EOF' || true
+if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y unattended-upgrades
+fi
+
+desired="$(mktemp)"
+trap 'rm -f "${desired}"' EXIT
+cat > "${desired}" <<'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-APT::Periodic::AutocleanInterval "7";
 EOF
 
-if [ ! -f "${CONF}" ] || [ "$(cat "${CONF}")" != "${CONTENT}" ]; then
-  printf '%s\n' "${CONTENT}" > "${CONF}"
-  chmod 0644 "${CONF}"
-  echo "wrote ${CONF}"
+if [ -f "${auto_upgrades}" ] && cmp -s "${desired}" "${auto_upgrades}"; then
+  echo "01-unattended-upgrades: ${auto_upgrades} already in place"
 else
-  echo "${CONF} already up to date"
+  install -m 0644 -o root -g root "${desired}" "${auto_upgrades}"
+  echo "01-unattended-upgrades: wrote ${auto_upgrades}"
 fi
