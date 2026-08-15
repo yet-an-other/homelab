@@ -1,0 +1,13 @@
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/info-widgets/
+
+- openmeteo:
+    label: Vienna # optional
+    latitude: 48.2082
+    longitude: 16.3738
+    timezone: Europe/Vienna # optional
+    units: metric # or imperial
+    cache: 5 # Time in minutes to cache API responses, to stay within limits
+    format: # optional, Intl.NumberFormat options
+      maximumFractionDigits: 1
+

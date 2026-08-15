@@ -1,20 +1,21 @@
 - name: create lxc container
-  hosts: 'prox-n2'
+  hosts: 'prox-n3'
   gather_facts: false
   vars:
     proxmox_node        : "{{ inventory_hostname }}"
     proxmox_password    : "{{ ansible_password }}"
     container_ssh_file  : "{{ ssh_pub_key_file }}"
-    container_hostname  : 'homepage'
+    container_hostname  : 'home'
     container_vlan_id   : 40
     container_ip        : ''
-    container_vmid      : 40302
-    container_disk_size : 3
+    container_vmid      : 40206
+    container_disk_size : 5
     container_memory    : 1024
     container_cores     : 1
     container_user      : 'root'
     container_mount     : ''
     container_nesting   : 1
+    container_mac       : 'BC:24:12:40:02:06'
 
   tasks:
     # create basic container
@@ -24,6 +25,9 @@
     # add docker
     #
     - import_tasks: ../ansible/add-docker.yaml
+
+
+    - import_tasks: ../ansible/add-nginx-ubuntu.yaml
 
     # copy configs
     #
@@ -35,19 +39,32 @@
         state: directory
         mode: 0755
       with_items:
-        - /config
-        - /config/homepage
-        - /config/nginx
-  
+        - ~/homepage/docker
+        - ~/homepage/config
+        - ~/homepage/images
+
     - name: copy configs
       delegate_to: "{{ container_hostname }}"
       become: true
       copy:
         dest: "{{ item.dest }}"
-        force: true
-        content: '{{ lookup("template", "{{ item.src }}") }}'
+        content: '{{ lookup("template", item.src) }}'
       with_items:
-        - { src: 'homepage-nginx.conf', dest: '/config/nginx/nginx.conf' }
+        - { src: 'services.yaml', dest: '~/homepage/config/services.yaml' }
+        - { src: 'settings.yaml', dest: '~/homepage/config/settings.yaml' }
+        - { src: 'widgets.yaml', dest: '~/homepage/config/widgets.yaml' }
+        - { src: 'bookmarks.yaml', dest: '~/homepage/config/bookmarks.yaml' }
+        - { src: 'proxmox.yaml', dest: '~/homepage/config/proxmox.yaml' }
+        - { src: 'docker-compose.yaml', dest: '~/homepage/docker/docker-compose.yaml' }
+        - { src: 'homepage.conf', dest: '/etc/nginx/conf.d/homepage.conf' }
+
+    - name: copy binary file
+      delegate_to: "{{ container_hostname }}"
+      become: true
+      copy:
+        src: background.jpg
+        dest: ~/homepage/images/background.jpg
+        mode: '0755'
 
     # run container
     #
@@ -55,38 +72,15 @@
       delegate_to: "{{ container_hostname }}"
       become: true
       shell: |
-        if [ ! "$(docker ps -a | grep homepage)" ]; then 
-          docker run --name homepage \
-            -e PUID=1000 \
-            -e PGID=1000 \
-            -p 3000:3000 \
-            -v /config/homepage/config:/app/config \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            --restart unless-stopped \
-            ghcr.io/gethomepage/homepage:latest
-        fi
-
-
-    - name: run nginx container
-      delegate_to: "{{ container_hostname }}"
-      become: true
-      shell: |
-        if [ ! "$(docker ps -a | grep nginx)" ]; then 
-          docker run --name nginx \
-            -v /config/nginx/nginx.conf:/etc/nginx/nginx.conf \
-            -v /usr/ssl:/usr/ssl \
-            -p 80:80 \
-            -p 443:443 \
-            --restart unless-stopped \
-            nginx:latest
-        fi
+        cd ~/homepage/docker
+        docker compose up -d -y
 
     # add certificates and restart nginx
     #
     - import_tasks: ../ansible/add-ssl-certificate.yaml
       vars:
         sites: '-d {{ container_hostname }}.{{ domain_name }}'
-        reloadcmd: 'sudo docker restart nginx'
+        reloadcmd: 'sudo systemctl restart nginx'
 
 
     # add connection to local ssh config

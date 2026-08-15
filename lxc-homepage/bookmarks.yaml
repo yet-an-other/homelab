@@ -1,0 +1,32 @@
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/bookmarks
+
+- Developer:
+    - Github:
+        - abbr: GH
+          href: https://github.com/
+    - Cloudflare:
+        - abbr: CF
+          href: https://dash.cloudflare.com/
+    - Amazon AWS:
+        - abbr: AWS
+          href: https://aws.amazon.com/console/
+    - Docker Hub:
+        - abbr: DH
+          href: https://hub.docker.com/
+    - Hetzner:
+        - abbr: HZ
+          href: https://hetzner.cloud/
+    - Azure:
+        - abbr: AZ
+          href: https://portal.azure.com/
+- Social:
+    - Gmail:
+        - abbr: GM
+          href: https://mail.google.com/
+    
+
+- Entertainment:
+    - YouTube:
+        - abbr: YT
+          href: https://youtube.com/

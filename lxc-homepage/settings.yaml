@@ -1,0 +1,31 @@
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/settings/
+
+title: Home Page
+background: /images/background.jpg
+cardBlur: sm
+hideErrors: true
+headerStyle: boxed
+
+layout:
+  Infrastructure:
+    style: column
+  Public Services (DMZ):
+    style: column
+    Misc:
+      style: row
+      columns: 2
+      header: false
+  Internal Services (VIP):
+    style: column
+    Proxies:
+      style: row
+      columns: 3
+      header: false
+      useEqualHeights: true
+
+
+
+providers:
+  openweathermap: openweathermapapikey
+  weatherapi: weatherapiapikey

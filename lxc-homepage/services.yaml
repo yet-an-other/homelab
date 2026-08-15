@@ -1,0 +1,222 @@
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/services/
+
+- Infrastructure:
+    - OpnSense:
+        icon: opnsense.png
+        href: https://os.bdgn.me
+        description: Firewall
+        siteMonitor: https://os.bdgn.me
+        widget:
+          type: opnsense
+          url: https://os.bdgn.me
+          username: '{{ os_user }}'
+          password: '{{ os_password }}'
+
+    - Omada:
+        icon: omada.png
+        href: https://omada.bdgn.me
+        description: Local Network
+        siteMonitor: https://omada.bdgn.me
+        proxmoxNode: prox-n1
+        proxmoxVMID: 10007
+        proxmoxType: lxc
+        showStats: true
+        widget:
+          type: omada
+          url: https://omada.bdgn.me
+          username: api-user
+          password: '{{ omada_password }}'
+          site: Luftbadgasse-1217
+
+    - Proxmox:
+        icon: proxmox.png
+        href: https://proxmox.bdgn.me/
+        description: Cluster Info
+        siteMonitor: https://proxmox.bdgn.me
+        widgets:
+          - type: proxmox
+            url: https://prox-n1.bdgn.me:8006
+            username: hp-api@pam!homepage
+            password: '{{ proxmox_api_token }}'
+          - type: proxmox
+            url: https://prox-n1.bdgn.me:8006
+            username: hp-api@pam!homepage
+            password: '{{ proxmox_api_token }}' 
+            node: prox-n1
+          - type: proxmox
+            url: https://prox-n2.bdgn.me:8006
+            username: hp-api@pam!homepage
+            password: '{{ proxmox_api_token }}'
+            node: prox-n2
+          - type: proxmox
+            url: https://prox-n3.bdgn.me:8006
+            username: hp-api@pam!homepage
+            password: '{{ proxmox_api_token }}'
+            node: prox-n3
+            
+    - S3 Storage:
+        icon: ceph.png
+        description: Object Storage
+        siteMonitor: https://s3.bdgn.me
+        proxmoxNode: prox-n1
+        proxmoxVMID: 10212
+        showStats: true
+
+
+- Public Services (DMZ):
+
+    - HomeAssistant:
+        icon: home-assistant.png
+        siteMonitor: https://ha.bdgn.me
+        href: https://ha.bdgn.me/
+        description: Home automation
+        proxmoxNode: prox-n3
+        proxmoxVMID: 30222
+        showStats: true
+        widget:
+          type: homeassistant
+          url: https://ha.bdgn.me
+          key: '{{ ha_access_token }}'
+          custom:
+            - state: sensor.black_sensor_temperature
+              label: temperature
+            - state: sensor.black_sensor_humidity
+              label: humidity
+
+    - qBittorrent:
+        icon: qbittorrent.png
+        href: https://qbt.bdgn.me/
+        description: Torrents
+        siteMonitor: https://qbt.bdgn.me
+        widget:
+          type: qbittorrent
+          url: https://qbt.bdgn.me
+          username: admin
+          password: '{{ qbt_password }}'
+          enableLeechProgress: true
+
+    - Plex:
+        icon: plex.png
+        href: https://plex.bdgn.me
+        description: Plex Media Server
+        siteMonitor: https://plex.bdgn.me
+        widget:
+          type: plex
+          url: https://plex.bdgn.me
+          key: '{{ plex_token }}'
+
+    - Misc:
+      - Ntfy:
+          icon: ntfy.png
+          href: https://ntfy.bdgn.me
+          description: Notifications
+          siteMonitor: https://ntfy.bdgn.me
+          proxmoxNode: prox-n2
+          proxmoxVMID: 20220
+          proxmoxType: lxc
+          widget:
+            type: customapi
+            url: https://ntfy.bdgn.me/v1/stats
+            mappings:
+              - field: messages
+                label: Messages
+                format: number
+              - field: messages_rate
+                label: Messages/s
+                format: number
+
+      - SponsorBlock:
+          icon: blocky.png
+          description: Sponsor Block
+          ping: sponsor-block.bdgn.me
+          proxmoxNode: prox-n2
+          proxmoxVMID: 20300
+          proxmoxType: lxc
+          showStats: true
+
+
+    - Immich:
+        icon: immich.png
+        href: https://immich.bdgn.me
+        description: Photo Management
+        siteMonitor: https://immich.bdgn.me
+        proxmoxNode: prox-n2
+        proxmoxVMID: 20307
+        proxmoxType: lxc
+        widget:
+          type: immich
+          url: https://immich.bdgn.me
+          key: '{{ immich_api_key }}'
+          version: 2
+
+    - Syncthing:
+        icon: syncthing.png
+        href: https://syncthing.bdgn.me
+        description: File Synchronization
+        siteMonitor: https://syncthing.bdgn.me
+        proxmoxNode: prox-n2
+        proxmoxVMID: 20221
+        proxmoxType: lxc
+        widget:
+          type: customapi
+          url: https://syncthing.bdgn.me/rest/svc/report
+          headers:
+            X-API-Key: '{{ syncthing_api_key }}'
+          mappings:
+            - field: totMiB
+              label: Stored (MB)
+              format: number
+            - field: numFolders
+              label: Folders
+              format: number
+            - field: totFiles
+              label: Files
+              format: number
+            - field: numDevices
+              label: Devices
+              format: number
+        
+
+- Internal Services (VIP):
+    - Kuma:
+        icon: uptime-kuma.png
+        href: https://uptime.bdgn.me
+        description: Monitoring
+        siteMonitor: https://uptime.bdgn.me
+        widget:
+          type: uptimekuma
+          url: https://uptime.bdgn.me
+          slug: total
+
+    - Proxies:
+        - Bastion:
+            icon: nginx.png
+            ping: bastion.bdgn.me
+            description: Ingress Proxy
+            proxmoxNode: prox-n2
+            proxmoxVMID: 20250
+            showStats: true
+
+        - BackDoor:
+            icon: nginx.png
+            ping: back-door.bdgn.me
+            description: Backup Proxy
+            proxmoxNode: prox-n2
+            proxmoxVMID: 20210
+            showStats: true
+
+        - lb-local:
+            icon: nginx.png
+            ping: lb-local.bdgn.me
+            description: Internal Proxy
+            proxmoxNode: prox-n3
+            proxmoxVMID: 40250
+            showStats: true
+
+    - Hudson:
+        icon: windows-11.png
+        description: Windows 11
+        proxmoxNode: prox-n3
+        proxmoxVMID: 40205
+        showStats: true

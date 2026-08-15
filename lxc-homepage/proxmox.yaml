@@ -1,0 +1,16 @@
+prox-n1:
+  url: https://proxmox.bdgn.me
+  token: hp-api@pam!homepage
+  secret: {{ proxmox_api_token }}
+
+prox-n2:
+  url: https://proxmox.bdgn.me
+  token: hp-api@pam!homepage
+  secret: {{ proxmox_api_token }}
+
+prox-n3:
+  url: https://proxmox.bdgn.me
+  token: hp-api@pam!homepage
+  secret: {{ proxmox_api_token }}
+
+
