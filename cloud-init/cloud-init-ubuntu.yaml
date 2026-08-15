@@ -1,0 +1,213 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+
+users:
+  - name: ib
+    gecos: ib
+    groups:
+      - sudo
+      - adm
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    shell: /usr/bin/zsh
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOU3h/cYVAtFlzRyUG7e2KOrIbLUpuZnTf81ZRd/yIMC
+
+disable_root: true
+ssh_pwauth: false
+
+packages:
+  - sudo
+  - zsh
+  - btop
+  - curl
+  - openssl
+  - git
+  - gcc
+  - unzip
+  - zip
+  - jq
+  - fontconfig
+  - ca-certificates
+  - tar
+  - xz-utils
+  - fzf
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-ib-hardening.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      Port 42318
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      PubkeyAuthentication yes
+      AuthenticationMethods publickey
+      PermitEmptyPasswords no
+      AllowUsers ib
+  - path: /usr/local/sbin/bootstrap-ib-environment.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      export DEBIAN_FRONTEND=noninteractive
+
+      user_name="ib"
+      user_home="/home/${user_name}"
+      user_group="$(id -gn "${user_name}")"
+      dotfiles_dir="${user_home}/.dotfiles"
+      zshrc_source="${dotfiles_dir}/zsh-ssh/.zshrc"
+      p10k_source="${dotfiles_dir}/zsh-ssh/.p10k.zsh"
+      fonts_dir="${user_home}/.local/share/fonts/JetBrainsMonoNerdFont"
+      fonts_archive="/tmp/JetBrainsMono.zip"
+      nvim_archive="/tmp/nvim-linux-x86_64.tar.gz"
+      nvim_install_dir="/opt/nvim-linux-x86_64"
+      nvim_config_dir="${user_home}/.config/nvim"
+      nvim_cache_dir="${user_home}/.cache/nvim"
+      nvim_data_dir="${user_home}/.local/share/nvim"
+      nvim_state_dir="${user_home}/.local/state/nvim"
+
+      run_as_user() {
+        sudo -u "${user_name}" -H bash -lc "$1"
+      }
+
+      install_eza() {
+        local arch
+        local pattern
+        local eza_deb_url
+
+        if command -v eza >/dev/null 2>&1; then
+          return 0
+        fi
+
+        if apt-cache show eza >/dev/null 2>&1; then
+          apt-get install -y eza
+          return 0
+        fi
+
+        arch="$(dpkg --print-architecture)"
+        case "${arch}" in
+          amd64)
+            pattern="linux_amd64\\.deb$"
+            ;;
+          arm64)
+            pattern="linux_arm64\\.deb$"
+            ;;
+          *)
+            echo "warning: unsupported architecture for automatic eza install: ${arch}" >&2
+            return 0
+            ;;
+        esac
+
+        eza_deb_url="$(curl -fsSL https://api.github.com/repos/eza-community/eza/releases/latest | jq -r --arg pattern "${pattern}" '.assets[] | select(.name | test($pattern)) | .browser_download_url' | head -n 1)"
+        if [ -z "${eza_deb_url}" ] || [ "${eza_deb_url}" = "null" ]; then
+          echo "warning: unable to resolve latest eza package" >&2
+          return 0
+        fi
+
+        curl -fsSL "${eza_deb_url}" -o /tmp/eza.deb
+        apt-get install -y /tmp/eza.deb
+        rm -f /tmp/eza.deb
+      }
+
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${user_home}/.config"
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${user_home}/.local/share/fonts"
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${user_home}/.cache"
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${user_home}/.local/share"
+      install -d -m 0700 -o "${user_name}" -g "${user_group}" "${user_home}/.local/state"
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${nvim_cache_dir}"
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${nvim_data_dir}"
+      install -d -m 0700 -o "${user_name}" -g "${user_group}" "${nvim_state_dir}"
+
+      chsh -s /usr/bin/zsh "${user_name}" || true
+
+      install_eza
+
+      if [ ! -d "${user_home}/.oh-my-zsh/.git" ]; then
+        run_as_user "git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git '${user_home}/.oh-my-zsh'"
+      fi
+
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${user_home}/.oh-my-zsh/custom/themes"
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${user_home}/.oh-my-zsh/custom/plugins"
+
+      if [ ! -d "${user_home}/.oh-my-zsh/custom/themes/powerlevel10k/.git" ]; then
+        run_as_user "git clone --depth 1 https://github.com/romkatv/powerlevel10k.git '${user_home}/.oh-my-zsh/custom/themes/powerlevel10k'"
+      fi
+
+      if [ ! -d "${user_home}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/.git" ]; then
+        run_as_user "git clone --depth 1 https://github.com/zsh-users/zsh-syntax-highlighting.git '${user_home}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting'"
+      fi
+
+      if [ ! -d "${dotfiles_dir}/.git" ]; then
+        run_as_user "git clone --branch main --depth 1 https://github.com/yet-an-other/dotfiles.git '${dotfiles_dir}'"
+      fi
+
+      if [ ! -f "${zshrc_source}" ]; then
+        echo "missing dotfiles source: ${zshrc_source}" >&2
+        exit 1
+      fi
+
+      if [ ! -f "${p10k_source}" ]; then
+        echo "missing dotfiles source: ${p10k_source}" >&2
+        exit 1
+      fi
+
+      run_as_user "ln -sfn '${zshrc_source}' '${user_home}/.zshrc'"
+      run_as_user "ln -sfn '${p10k_source}' '${user_home}/.p10k.zsh'"
+
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${fonts_dir}"
+      run_as_user "curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip -o '${fonts_archive}'"
+      run_as_user "unzip -oq '${fonts_archive}' -d '${fonts_dir}'"
+      run_as_user "rm -f '${fonts_archive}'"
+      run_as_user "fc-cache -f '${user_home}/.local/share/fonts'"
+
+      curl -fsSL https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz -o "${nvim_archive}"
+      rm -rf "${nvim_install_dir}"
+      tar -C /opt -xzf "${nvim_archive}"
+      rm -f "${nvim_archive}"
+      ln -sfn "${nvim_install_dir}/bin/nvim" /usr/local/bin/nvim
+
+      if [ -d "${nvim_config_dir}" ] && [ ! -f "${nvim_config_dir}/lazyvim.json" ]; then
+        mv "${nvim_config_dir}" "${nvim_config_dir}.bak.$(date +%s)"
+      fi
+
+      if [ ! -f "${nvim_config_dir}/lazyvim.json" ]; then
+        run_as_user "git clone --depth 1 https://github.com/LazyVim/starter '${nvim_config_dir}'"
+        rm -rf "${nvim_config_dir}/.git"
+      fi
+
+      install -d -m 0755 -o "${user_name}" -g "${user_group}" "${nvim_config_dir}/lua/config"
+
+      keymaps_source=""
+      for candidate in \
+        "${dotfiles_dir}/nvim/keymaps.lua" \
+        "${dotfiles_dir}/nvim/lua/config/keymaps.lua"
+      do
+        if [ -f "${candidate}" ]; then
+          keymaps_source="${candidate}"
+          break
+        fi
+      done
+
+      if [ -z "${keymaps_source}" ]; then
+        echo "missing keymaps.lua in ${dotfiles_dir}/nvim" >&2
+        exit 1
+      fi
+
+      run_as_user "ln -sfn '${keymaps_source}' '${nvim_config_dir}/lua/config/keymaps.lua'"
+      chown -h "${user_name}:${user_group}" "${user_home}/.zshrc" "${user_home}/.p10k.zsh" "${nvim_config_dir}/lua/config/keymaps.lua"
+
+      curl -LO https://zmx.sh/a/zmx-0.6.0-linux-x86_64.tar.gz
+      tar -xvzf zmx-0.6.0-linux-x86_64.tar.gz
+      sudo chmod +x zmx
+      sudo mv zmx /usr/local/bin/
+
+runcmd:
+  - systemctl restart ssh
+  - /usr/local/sbin/bootstrap-ib-environment.sh
