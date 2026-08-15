@@ -70,6 +70,11 @@
             kubectl exec -n postgres pg-inf-1 -- bash -c "psql -U postgres -d zitadel -c \"ALTER ROLE postgres WITH PASSWORD '{{ pgi_password }}'\""
             kubectl exec -n postgres pg-inf-1 -- bash -c "psql -U postgres -d grafana -c \"ALTER ROLE postgres WITH PASSWORD '{{ pgi_password }}'\""
 
+    - name: add podmonitoring to postgres namespace
+      kubernetes.core.k8s:
+        state: present
+        definition: '{{ lookup("template", "postgres/08-podmonitor.yaml") }}'
+
   vars:
     app_namespace: '{{ pg_namespace }}'
     pgi_storage_size: 2Gi

@@ -5,6 +5,11 @@ prometheus:
   enabled: true
 
   prometheusSpec:
+    # Watch PodMonitors and ServiceMonitors from all namespaces
+    podMonitorNamespaceSelector: {}
+    podMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
     # storageSpec:
     #   volumeClaimTemplate: 
     #     spec:
@@ -57,7 +62,7 @@ grafana:
 
     - name: tempo
       type: tempo
-      url: http://{{ tempo_endpoint }}:3100
+      url: http://{{ tempo_endpoint }}:3200
       jsonData:
         httpMethod: GET
         serviceMap:
