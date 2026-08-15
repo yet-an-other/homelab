@@ -160,54 +160,56 @@
       when: ssh_key_exists.rc != 0
 
 
-    - name: create host container={{ container_hostname }} host={{ host }} with user={{ container_user }}
-      add_host:
-        name: '{{ container_hostname }}'
-        ansible_host: '{{ host }}'
-        ansible_user: '{{ container_user }}'
-        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+- name: create host container={{ container_hostname }} host={{ host }} with user={{ container_user }}
+  add_host:
+    name: '{{ container_hostname }}'
+    ansible_host: '{{ host }}'
+    ansible_user: '{{ container_user }}'
+    ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
 
-    - name: update system
-      delegate_to: '{{ container_hostname }}'
-      become: yes
-      apt:
-        update_cache: yes
-        upgrade     : dist
-        autoremove  : yes
-        autoclean   : yes
+- name: update system
+  delegate_to: '{{ container_hostname }}'
+  become: yes
+  apt:
+    update_cache: yes
+    upgrade     : dist
+    autoremove  : yes
+    autoclean   : yes
 
-    - name: install packages
-      delegate_to: '{{ container_hostname }}'
-      become: true
-      ansible.builtin.apt:
-        name: "{{ item }}"
-        state: present
-      with_items:
-        - curl
-        - eza
-        - git
-        - ca-certificates
-        - gnupg2
-        - lsb-release
-        - ubuntu-keyring
-        - btop
-    
-    - name: install neovim from official source if not present
-      block:
-        - name: get and setup binary
-          become: true
-          shell: |
-            curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
-            rm -rf /opt/nvim-linux-x86_64
-            tar -C /opt -xzf nvim-linux-x86_64.tar.gz 
-          args:
-            creates: /opt/nvim-linux-x86_64
+- name: install packages
+  delegate_to: '{{ container_hostname }}'
+  become: true
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - curl
+    - eza
+    - git
+    - ca-certificates
+    - gnupg2
+    - lsb-release
+    - ubuntu-keyring
+    - btop
 
-        - name: symlink nvim binary
-          file:
-            src: /opt/nvim-linux-x86_64/bin/nvim
-            dest: /usr/bin/nvim
-            state: link
+- name: install neovim from official source if not present
+  become: true
+  delegate_to: '{{ container_hostname }}'
+  shell: |
+    curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
+    rm -rf /opt/nvim-linux-x86_64
+    tar -C /opt -xzf nvim-linux-x86_64.tar.gz 
+    rm nvim-linux-x86_64.tar.gz
+  args:
+    creates: /opt/nvim-linux-x86_64
+
+- name: symlink nvim binary
+  become: true
+  delegate_to: '{{ container_hostname }}'
+  file:
+    src: /opt/nvim-linux-x86_64/bin/nvim
+    dest: /usr/bin/nvim
+    state: link
 
 - name: config neovim
   delegate_to: '{{ container_hostname }}'
@@ -217,6 +219,7 @@
 
 - name: nvim init.vim
   delegate_to: '{{ container_hostname }}'
+  become: true
   copy:
     dest: ~/.config/nvim/init.vim
     content: |
@@ -264,6 +267,8 @@
     line: 'export EDITOR=nvim'
 
 - name: config bashrc
+  delegate_to: '{{ container_hostname }}'
+  become: true
   blockinfile: 
     path: ~/.bashrc
     prepend_newline: yes

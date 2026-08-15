@@ -1,0 +1,22 @@
+- name: install and configure zsh and neovim
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    managed_user: "{{ ansible_env.SUDO_USER | default(ansible_user) }}"
+    managed_home: "{{ '/root' if managed_user == 'root' else '/home/' + managed_user }}"
+  tasks:
+    - name: install apps on Debian-based systems
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - eza
+          - btop
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: install and configure zsh defaults
+      ansible.builtin.import_tasks: ../ansible/set-zsh-default.yaml
+
+    - name: install and configure neovim
+      ansible.builtin.import_tasks: ../ansible/add-neovim.yaml

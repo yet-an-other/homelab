@@ -12,7 +12,11 @@
         name            : '{{ vm.hostname }}'
         cores           : '{{ vm.cores }}'
         clone           : '{{ vm.template }}'
+        validate_certs  : false 
+        timeout         : 60 
       register          : vm_creation_result
+      retries          : 3
+      delay            : 5
 
     - name: print info
       ansible.builtin.debug:

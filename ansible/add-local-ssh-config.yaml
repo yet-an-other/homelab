@@ -13,7 +13,8 @@
     prepend_newline: true
     insertbefore: "Host \\*"   
     marker: "# {mark} ANSIBLE MANAGED BLOCK"
-    marker_begin: "{{ hostname }}"  
+    marker_begin: "{{ hostname }}"
+    marker_end: "{{ hostname }} END"
     block: |
       Host {{ hostname }}
         HostName {{ host }}
