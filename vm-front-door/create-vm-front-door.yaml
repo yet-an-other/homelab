@@ -61,6 +61,8 @@
           - { port: 20002, proto: tcp }
           - { port: 20003, proto: tcp }
           - { port: 20004, proto: tcp }
+          - { port: 20005, proto: tcp }
+          - { port: 20006, proto: tcp }
           - { port: 13779, proto: tcp }
 
     - name: copy main nginx config
@@ -124,7 +126,7 @@
     ##
     - import_tasks: ../ansible/add-ssl-certificate.yaml
       vars:
-        sites: '-d {{ domain_name }} -d speed.{{ domain_name }}'
+        sites: '-d {{ domain_name }} -d home.{{ domain_name }} -d rhome.{{ domain_name }} -d thome.{{ domain_name }} -d xhome.{{ domain_name }}'
         container_hostname: '{{ vm.hostname }}'
         reloadcmd: "sudo chown -R xrayuser:xrayuser /usr/ssl && sudo chmod g+rwx -R /usr/ssl/ && sudo systemctl restart nginx && sudo systemctl restart xray"
   

@@ -121,7 +121,7 @@
     - import_tasks: ../ansible/add-ssl-certificate.yaml
       vars:
         container_hostname: '{{ vm.hostname }}'
-        sites: '-d {{ domain_name }} -d speed.{{ domain_name }}'
+        sites: '-d {{ domain_name }} -d speed.{{ domain_name }} -d home.{{ domain_name }}'
         reloadcmd: "sudo chown -R xrayuser:xrayuser /usr/ssl && sudo chmod g+rwx -R /usr/ssl/ && sudo systemctl restart nginx && sudo systemctl restart xray"
   
 
