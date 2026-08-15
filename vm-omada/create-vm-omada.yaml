@@ -1,0 +1,108 @@
+## Creates front-facing reverse proxy vm
+## Using ubuntu linux as base image, as alpine does not really work with xray which we need for vpn
+## VPN is hidden behind speed-test service, and for that we need a streaming module for nginx
+##
+- name: create vm
+  hosts: 'prox-n2'
+  gather_facts: false
+  vars:
+    proxmox:
+      node              : "{{ inventory_hostname }}"    
+      password          : "{{ ansible_password }}"
+    vm:
+      type              : "ubuntu"
+      template          : 'ubuntu2404-template'
+      hostname          : 'omada'
+      vlan_id           : 10
+      ip                : '192.168.10.2'
+      id                : 10002
+      memory            : 2048
+      cores             : 1
+      disk_size         : '10G'
+      mac               : 'BC:24:12:00:10:02'
+      tag_name          : 'lan'
+      user              : 'ib'
+
+  tasks:
+    - name: create and preconfigure ubuntu vm
+      import_tasks: ../ansible/create-vm.yaml
+
+    - name: add "{{ vm.hostname }}" to inventory
+      add_host:
+        name: '{{ vm.hostname }}'
+        ansible_python_interpreter: 'auto_silent'
+        ansible_host: '{{ vm.ip }}' ## dhcp should assign the ip based on mac
+        ansible_user: '{{ vm.user }}'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      changed_when: false
+
+    - name: Wait for VM to start running
+      community.proxmox.proxmox_vm_info:
+        api_host: '{{ proxmox.node }}'
+        api_user: 'root@pam'
+        api_password: '{{ proxmox.password }}'
+        name        : '{{ vm.hostname }}'
+        node        : '{{ proxmox.node }}'
+        config      : current
+      delegate_to: localhost
+      register: uvm_info
+      until: uvm_info is defined and uvm_info.proxmox_vms is defined and uvm_info.proxmox_vms[0].status == "running"
+      retries: 30
+      delay: 1   
+
+    - import_tasks: ../ansible/add-nginx-ubuntu.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'
+
+    # add connection to local ssh config
+    #
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ vm.hostname }}'
+        host: '{{ vm.hostname }}'
+
+    - name: copy sites config
+      become: yes
+      delegate_to: "{{ vm.hostname }}"
+      copy:
+        dest: /etc/nginx/conf.d/{{ item.dest }}
+        content: "{{ lookup('template', item.src) }}"
+      loop:
+        - { src: 'nginx-omada.conf', dest: 'omada.conf' }
+
+    - import_tasks: ../ansible/add-docker.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'
+
+    - name: gather omada controller container state
+      become: yes
+      delegate_to: "{{ vm.hostname }}"
+      community.docker.docker_container_info:
+        name: omada-controller
+      register: omada_controller_info
+
+    - name: run omada controller
+      become: yes
+      delegate_to: "{{ vm.hostname }}"
+      shell: |
+        docker run -d \
+          --name omada-controller \
+          --stop-timeout 60 \
+          --restart unless-stopped \
+          --ulimit nofile=4096:8192 \
+          --net host \
+          -e TZ=Etc/UTC \
+          -v omada-data:/opt/tplink/EAPController/data \
+          -v omada-logs:/opt/tplink/EAPController/logs \
+          mbentley/omada-controller:6.1
+      when: not (omada_controller_info.exists
+                  and omada_controller_info.container is defined
+                  and (omada_controller_info.container.State.Running | default(false)))
+
+    # add certificates and restart nginx
+    #
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'
+        sites: '-d {{ vm.hostname }}.{{ domain_name }}'
+        reloadcmd: 'sudo systemctl restart nginx'
