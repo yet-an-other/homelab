@@ -1,0 +1,164 @@
+- name: create vm
+  hosts: 'prox-n2'
+  gather_facts: true
+  vars:
+    proxmox:
+      node: "{{ inventory_hostname }}"
+      password: "{{ ansible_password }}"
+    vm:
+      type: "alma"
+      template: 'alma10-template'
+      hostname: 'lb-local'
+      vlan_id: 40
+      ip: '192.168.40.250'
+      id: 40250
+      memory: 1024
+      cores: 1
+      disk_size: '10G'
+      mac: 'BC:24:12:00:42:50'
+      tag_name: 'vip'
+      user: 'ib'
+
+  tasks:
+    - name: create and preconfigure alma vm
+      import_tasks: ../ansible/create-vm.yaml
+
+    - name: add "{{ vm.hostname }}" to inventory
+      add_host:
+        name: '{{ vm.hostname }}'
+        ansible_python_interpreter: 'auto_silent'
+        ansible_host: '{{ vm.ip }}'
+        ansible_user: '{{ vm.user }}'
+        ansible_ssh_private_key_file: '{{ ansible_ssh_private_key_file }}'
+      changed_when: false
+
+    - name: wait for ssh on {{ vm.hostname }}
+      ansible.builtin.wait_for:
+        host: '{{ vm.ip }}'
+        port: 22
+        timeout: 300
+        delay: 5
+      delegate_to: localhost
+
+    - import_tasks: ../ansible/add-local-ssh-config.yaml
+      vars:
+        hostname: '{{ vm.hostname }}'
+        host: '{{ vm.ip }}'
+        user: '{{ vm.user }}'
+
+    - name: validate lb-local wireguard settings
+      ansible.builtin.assert:
+        that:
+          - lb_local is defined
+          - lb_local.wg is defined
+          - lb_local.wg.ip is defined
+          - lb_local.wg.ip | length > 0
+          - lb_local.wg.private_key is defined
+          - lb_local.wg.private_key | length > 0
+          - lb_local.wg.peer_1 is defined
+          - lb_local.wg.peer_1.ip is defined
+          - lb_local.wg.peer_1.ip | length > 0
+          - lb_local.wg.peer_1.public_key is defined
+          - lb_local.wg.peer_1.public_key | length > 0
+
+    - name: install nftables for wireguard NAT
+      delegate_to: "{{ vm.hostname }}"
+      become: true
+      ansible.builtin.dnf:
+        name: 
+          - nftables
+          - openssl
+        state: present
+
+    - name: open firewall for wireguard
+      delegate_to: "{{ vm.hostname }}"
+      become: true
+      ansible.posix.firewalld:
+        port: "{{ lb_local.wg.port | default(51820) }}/udp"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: trust wireguard peer source
+      delegate_to: "{{ vm.hostname }}"
+      become: true
+      ansible.posix.firewalld:
+        zone: trusted
+        source: "10.52.0.0/24"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: configure wireguard server
+      import_tasks: ../ansible/add-wireguard.yaml
+      vars:
+        wireguard_target_host: '{{ vm.hostname }}'
+        wireguard_interface: wg0
+        wireguard_listen_port: "{{ lb_local.wg.port | default(51820) }}"
+        wireguard_private_key: '{{ lb_local.wg.private_key }}'
+        wireguard_addresses:
+          - "{{ lb_local.wg.ip if '/' in lb_local.wg.ip else lb_local.wg.ip ~ '/24' }}"
+        wireguard_post_up:
+          - "sysctl -w net.ipv4.ip_forward=1"
+          - "nft add table ip wg_lb_local"
+          - "nft 'add chain ip wg_lb_local forward { type filter hook forward priority filter; policy accept; }'"
+          - "nft 'add chain ip wg_lb_local postrouting { type nat hook postrouting priority srcnat; policy accept; }'"
+          - "nft add rule ip wg_lb_local forward iifname \"wg0\" ip saddr 10.52.0.0/24 ip daddr 192.168.0.0/16 accept"
+          - "nft add rule ip wg_lb_local forward oifname \"wg0\" ct state established,related ip saddr 192.168.0.0/16 ip daddr 10.52.0.0/24 accept"
+          - "nft add rule ip wg_lb_local postrouting ip saddr 10.52.0.0/24 ip daddr 192.168.0.0/16 masquerade"
+        wireguard_post_down:
+          - "nft delete table ip wg_lb_local"
+        wireguard_peers:
+          - public_key: '{{ lb_local.wg.peer_1.public_key }}'
+            allowed_ips:
+              - "{{ lb_local.wg.peer_1.ip if '/' in lb_local.wg.peer_1.ip else lb_local.wg.peer_1.ip ~ '/32' }}"
+          - public_key: '{{ lb_local.wg.peer_2.public_key }}'
+            allowed_ips:
+              - "{{ lb_local.wg.peer_2.ip if '/' in lb_local.wg.peer_2.ip else lb_local.wg.peer_2.ip ~ '/32' }}"
+
+    - name: add nginx to alma vm
+      import_tasks: ../ansible/add-nginx-alma.yaml
+      vars:
+        hostname: '{{ vm.hostname }}'
+        fw_ports:
+          - { port: 80, proto: tcp }
+          - { port: 443, proto: tcp }
+        se_ports: []
+
+    - name: deploy proxmox load balancer config
+      delegate_to: "{{ vm.hostname }}"
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/proxmox.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: "{{ lookup('template', 'proxmox.conf') }}"
+
+    - import_tasks: ../ansible/add-ssl-certificate.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'
+        sites: '-d proxmox.{{ domain_name }}'
+        reloadcmd: 'sudo systemctl restart nginx'
+
+    - name: install btop on alma vm
+      delegate_to: "{{ vm.hostname }}"
+      become: true
+      ansible.builtin.dnf:
+        name:
+          - btop
+        state: present
+
+    - name: add eza to alma vm
+      import_tasks: ../ansible/add-eza-alma.yaml
+      vars:
+        container_hostname: '{{ vm.hostname }}'
+
+    - name: configure lb-local userland
+      delegate_to: "{{ vm.hostname }}"
+      block:
+        - import_tasks: ../ansible/set-zsh-default.yaml
+        - import_tasks: ../ansible/add-neovim.yaml
+      vars:
+        managed_user: '{{ vm.user }}'
+        managed_home: '/home/{{ vm.user }}'
