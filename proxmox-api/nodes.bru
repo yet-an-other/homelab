@@ -1,0 +1,20 @@
+meta {
+  name: nodes
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://proxmox.bdgn.me/api2/json/nodes
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: PVEAPIToken={{login}}={{secret}}
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

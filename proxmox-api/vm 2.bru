@@ -1,0 +1,26 @@
+meta {
+  name: vm 2
+  type: http
+  seq: 4
+}
+
+get {
+  url: https://proxmox.bdgn.me/api2/json/nodes/:node/:vmtype/:vmid/status/current
+  body: none
+  auth: none
+}
+
+params:path {
+  vmid: 30222
+  vmtype: qemu
+  node: prox-n3
+}
+
+headers {
+  Authorization: PVEAPIToken={{login}}={{secret}}
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
