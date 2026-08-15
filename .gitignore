@@ -36,3 +36,6 @@ terraform.rc
 vm-callback/server.jsonc
 **/server.live.jsonc
 **/xray-config.live.json
+# External research clone + local agent session state
+Xray-docs-next/
+.pi/
