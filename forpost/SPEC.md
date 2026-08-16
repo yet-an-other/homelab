@@ -5,7 +5,8 @@ Status: **created**.
 ([#3](https://github.com/yet-an-other/homelab/issues/3),
 [#5](https://github.com/yet-an-other/homelab/issues/5),
 [#6](https://github.com/yet-an-other/homelab/issues/6),
-[#7](https://github.com/yet-an-other/homelab/issues/7)).
+[#7](https://github.com/yet-an-other/homelab/issues/7)), plus the xform deployment
+([#14](https://github.com/yet-an-other/homelab/issues/14)).
 Domain vocabulary: `CONTEXT.md`. xray facts: `docs/research/xray-vlessroute.md`.
 
 ## 1. Purpose and topology
@@ -24,6 +25,10 @@ client ──VLESS+Reality──> forpost ──VLESS+Reality──> alwyzon ─
                              │
                              └──VLESS+Reality──> bastion ──> internal VMs
                              (privileged users, internal destinations only)
+
+operator ──HTTPS :9443──> nginx ──HTTP loopback──> xform
+                                           │
+                                           └──gRPC loopback──> xray StatsService
 ```
 
 Privilege is enforced by the **authenticated email tag** in xray (`user` field in routing rules).
@@ -53,12 +58,17 @@ forpost/
 │   ├── 31-tools.sh
 │   ├── 40-xray.sh
 │   ├── 41-nginx.sh
-│   └── 42-ufw.sh
+│   ├── 42-ufw.sh
+│   └── 43-xform.sh
 ├── templates/
 │   ├── xray-config.json.j2
 │   ├── nginx.conf.j2
 │   ├── default.conf.j2
-│   └── fallback.conf.j2
+│   ├── fallback.conf.j2
+│   ├── xform.conf.j2
+│   └── xform.service.j2
+├── tests/
+│   └── xform-updater.sh     # isolated release/update lifecycle seam
 └── user-data.yaml           # slim reachability-only cloud-init, pasted at VM creation
 ```
 
@@ -72,7 +82,8 @@ arch-aware via `dpkg --print-architecture` (x86_64 primary, arm64 supported).
 Staging path on the node: `/usr/local/sbin/forpost/` (bootstrap + units). Templates are rendered by the
 play before the corresponding unit runs: the xray config directly to its final destination
 (`/usr/local/etc/xray/config.json`); the nginx confs into staging under `/usr/local/sbin/forpost/nginx/` —
-`41-nginx.sh` places them (units place, verify, restart, §5).
+`41-nginx.sh` places them (units place, verify, restart, §5). The xform systemd unit is staged under
+`/usr/local/sbin/forpost/xform/` and placed by `43-xform.sh`.
 
 ## 3. Secrets (#6)
 
@@ -132,7 +143,7 @@ the reference; the units are the executable source of truth.
 
 | Unit | Does | Idempotency guard |
 |---|---|---|
-| `00-packages.sh` | `apt-get update/upgrade`; install `sudo zsh btop curl openssl git gcc unzip zip jq fontconfig ca-certificates tar xz-utils fzf nginx ufw unattended-upgrades` | apt is naturally idempotent |
+| `00-packages.sh` | `apt-get update/upgrade`; install `sudo zsh btop curl openssl git gcc unzip zip jq fontconfig ca-certificates tar xz-utils fzf nginx ufw unattended-upgrades acl` | apt is naturally idempotent |
 | `01-unattended-upgrades.sh` | enable automatic security updates | check config before write |
 | `10-user-sshd.sh` | assert user `ib` (groups `sudo,adm`, NOPASSWD sudo, locked password, zsh shell, authorized key); write `/etc/ssh/sshd_config.d/60-ib-hardening.conf` (Port 42318, pubkey-only, `AllowUsers ib`, no root); restart ssh | user exists / file content compare |
 | `20-shell.sh` | oh-my-zsh, powerlevel10k, zsh-syntax-highlighting; clone `yet-an-other/dotfiles`; symlink `.zshrc`, `.p10k.zsh` | `[ ! -d …/.git ]` (existing pattern) |
@@ -148,11 +159,13 @@ bootstrap shim (§7), the unit is the contract.
 | Unit | Does |
 |---|---|
 | `40-xray.sh` | run `lib/install-xray.sh` (install/upgrade xray-core, systemd unit); logrotate for `/var/log/xray/*.log`; `systemctl enable --now xray` / restart on config change |
-| `41-nginx.sh` | place rendered `nginx.conf` / `conf.d/default.conf` / `conf.d/fallback.conf`; `nginx -t`; reload |
-| `42-ufw.sh` | `default deny incoming`, `default allow outgoing`; allow `42318/tcp` (SSH) and `443/tcp` only; `--force enable`. **443/udp stays closed deliberately** (QUIC blocked, §6) |
+| `41-nginx.sh` | place rendered `nginx.conf` / `conf.d/default.conf` / `conf.d/fallback.conf` / `conf.d/xform.conf`; `nginx -t`; reload |
+| `42-ufw.sh` | `default deny incoming`, `default allow outgoing`; allow `42318/tcp` (SSH), `443/tcp` (VPN), and `9443/tcp` (xform); `--force enable`. **443/udp stays closed deliberately** (QUIC blocked, §6) |
+| `43-xform.sh` | install the latest stable checksum-verified xform release by architecture; place and harden its systemd service; preserve state; smoke-test updates; roll back and quarantine failed releases |
 
 The xray config and nginx confs are rendered by the play (§9) from `templates/` before units run;
-units never template — they place, verify, restart.
+units never template — they place, verify, restart. Unit 43 is also invoked on otherwise unchanged Ansible
+runs so release discovery happens during every deliberate deployment, never from a background timer.
 
 ## 6. xray configuration (#3, #7)
 
@@ -164,6 +177,12 @@ always be a live TLS 1.3 endpoint — xray mirrors dest's handshake even for
 authenticated clients (post-mortem in #10).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
+
+**Read-only statistics API.** xform's prerequisite contract enables `stats`, level-zero user uplink,
+downlink, and online-user policy, plus inbound/outbound system traffic policy. Xray exposes only
+`StatsService` at `127.0.0.1:8080`; HandlerService, RoutingService, LoggerService, and every other
+mutation-capable API remain disabled. The loopback boundary is mandatory because Xray's gRPC API has
+no authentication or TLS. Existing user email tags are the per-user statistics identities.
 
 **Inbound** (single live inbound; the nginx SNI map anticipates more — see fog):
 
@@ -253,11 +272,41 @@ only live inbound. Template files:
 - `fallback.conf.j2` — TLS server on `127.0.0.1:8443`, `server_name {{ forpost.server_name }};`,
   reverse-proxies the **real** `https://speed.bdgn.me` (public, served by frontgate) so probes see a
   genuine site; preserve `Host` towards upstream per frontgate's fallback.conf conventions
+- `xform.conf.j2` — public TLS server on `9443`, `server_name {{ forpost.domain }}`, proxying the full
+  origin to xform at `127.0.0.1:9090` with no URI rewrite. It deliberately adds no proxy authentication
+  or source restriction; authentication belongs to xform and public pre-auth exposure is accepted.
 
 **Certificate**: TLS cert for `{{ forpost.domain }}` via the existing
 `ansible/add-ssl-certificate.yaml` (Cloudflare DNS challenge; `cf_token`/`cf_zone_id` already in
-secrets), installed before `41-nginx.sh` runs. Used by both the fallback vhost and the default site.
+secrets), installed before `41-nginx.sh` runs. Used by the fallback, default, and xform sites.
 Note: this is cert issuance only — the DNS *A record* stays manual (§10).
+
+### xform lifecycle (#14)
+
+xform runs as a dedicated unprivileged user under a hardened systemd service. Its HTTP listener is
+`127.0.0.1:9090`; environment variables point it at the loopback StatsService, Xray config, persistent
+state, and `xray.service`. A file ACL grants read-only Xray-config access without making xform root or
+changing Xray's existing `nogroup` access. xform writes only to its systemd-managed application state
+directory and logs to journald. Installed-version metadata, the quarantine marker, and the pre-upgrade
+database backup stay in root-owned forpost deployment state, outside xform's writable directory.
+
+Every normal Ansible deployment asks GitHub for the latest stable, non-draft, non-prerelease release,
+selects `xform-linux-amd64` or `xform-linux-arm64`, and verifies it against `checksums.txt`. Matching
+content is a no-op. Updates download and verify while the old process remains live, then stop xform,
+retain the previous binary and one database backup, swap atomically, restart, and probe `/api/v1/healthz`, falling back to the current
+`/api/v1/server` contract when healthz is not implemented. Either release-appropriate endpoint is a
+successful smoke test; exposing neither rejects the release. Release tags, not asset hashes, define upgrade identity:
+the same tag is a no-op, while a new tag is restarted and smoke-tested even when its bytes are identical.
+A failed probe restores the binary and database, restarts the prior version, and records the rejected tag.
+A healthy rollback is a recovered update, so the play continues to its Xray, nginx, and port-443 checks;
+the same rejected tag is skipped until a newer release
+appears or `/var/lib/forpost/xform/rejected-version` is removed manually. Inspect service and update output with
+`journalctl -u xform` and `/var/log/forpost/43-xform.log`.
+
+If release discovery or download fails before first installation, deployment fails. If a verified xform
+is already installed, the unit warns, retains it, and verifies local health. The upstream daily update
+timer is never installed. A brief `9443` outage during update is accepted; port `443` and the VPN data
+path are never restarted by the xform unit.
 
 **user-data.yaml** (slim, reachability-only — the whole contract):
 
@@ -318,12 +367,17 @@ through the tunnel (socks5h-style) use bastion's scoped internal DNS module inst
 3. push `bootstrap.sh` + `units/` → `/usr/local/sbin/forpost/` (mode 0755)
 4. render `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`
 5. render `templates/{nginx.conf,default.conf,fallback.conf}.j2` → staging under `/usr/local/sbin/forpost/nginx/`
-6. nginx first: `bootstrap.sh --only 41` brings the fallback vhost up BEFORE any xray restart — xray
+6. render the xform nginx vhost and hardened systemd service into staging
+7. nginx first: `bootstrap.sh --only 41` brings the fallback vhost up BEFORE any xray restart — xray
    mirrors dest's handshake even for authenticated clients, so xray-first ordering drops clients (#10)
-7. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
-8. verify: `wait_for port 443`, `systemctl is-active xray nginx`, ufw lockdown (42318 + 443/tcp only)
+8. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
+9. run `bootstrap.sh --only 43` after orchestration on every apply to check the latest stable xform
+   release without touching Xray or nginx (a preceding full bootstrap makes this an immediate no-op)
+10. verify: public ports 443 and 9443, active/enabled xray+nginx+xform, loopback-only xform+StatsService,
+    hardened xform access, and exact UFW lockdown (42318 + 443 + 9443/tcp)
 
-Re-running the play on a live node must be a no-op when nothing changed (idempotency, #5).
+Re-running the play on a live node must be a no-op when configuration and the latest xform release are
+unchanged (idempotency, #5).
 
 ## 10. Runbook
 
@@ -335,7 +389,8 @@ Re-running the play on a live node must be a no-op when nothing changed (idempot
    `inventory.secret.yaml`
 4. **Upstream clients**: add forpost's client UUID to bastion's xray clients (`vm-bastion/`) and to
    alwyzon's xray (manual — external VM); record coordinates in the vars section
-5. `./apply.sh forpost`
+5. Open TCP port `9443` in the cloud-provider firewall (provider firewall automation remains out of scope)
+6. `./apply.sh forpost`
 
 **Re-run / iterate**: `./apply.sh forpost` (no-op when unchanged); to re-run only the VPN layer,
 `ansible-playbook … -e forpost_bootstrap_args="--from 40"`.
@@ -343,16 +398,19 @@ Re-running the play on a live node must be a no-op when nothing changed (idempot
 ## 11. Verification checklist
 
 - [ ] `ssh -p 42318 ib@<domain>` works; root/password auth refused
-- [ ] `systemctl is-active xray nginx` both active; `ufw status` shows only 42318 + 443/tcp
+- [ ] `systemctl is-active xray nginx xform` all active; UFW shows only 42318 + 443 + 9443/tcp
 - [ ] `curl -sv https://<domain>/` serves the real speed.bdgn.me content (fallback)
 - [ ] probe with wrong SNI → 418
+- [ ] `curl -fsS https://<domain>:9443/` reaches xform with a valid certificate
+- [ ] xform listens only on `127.0.0.1:9090`; Xray StatsService listens only on `127.0.0.1:8080`
+- [ ] `xray api statsquery --server=127.0.0.1:8080` succeeds
 - [ ] non-privileged client: exit IP = alwyzon's; public `*.bdgn.me` works; `192.168.x.x` fails fast
 - [ ] privileged client: exit IP = alwyzon's; `*.bdgn.me` and internal IPs reach internal VMs via bastion
-- [ ] second `./apply.sh forpost` run reports no changes
+- [ ] second `./apply.sh forpost` run reports no changes when upstream has no newer xform release
 
 ## 12. Non-goals / fog
 
 Out of scope (map #2): cloud VM provisioning; alwyzon configuration-as-code; frontgate/front-door changes.
-Not yet specified: client onboarding/distribution; observability (log retention, alerting); multi-node
-orchestration; additional VLESS transports (xhttp, tcp+tls — the SNI map anticipates them); Cloudflare
+Not yet specified: client onboarding/distribution; observability beyond xform deployment (alerting and
+telemetry semantics remain upstream concerns); multi-node orchestration; additional VLESS transports (xhttp, tcp+tls — the SNI map anticipates them); Cloudflare
 DNS-record automation.

@@ -3,8 +3,8 @@
 # 41-nginx.sh — the nginx entry (SPEC §5/§7, issue #13).
 #
 # Ubuntu ships the stream module separately (libnginx-mod-stream); the http
-# block, SNI-map stream block, 418 default site and fallback vhost are
-# rendered by the play into staging and PLACED by this unit — units place,
+# block, SNI-map stream block, 418 default site, fallback vhost and xform
+# TLS proxy are rendered by the play into staging and PLACED by this unit — units place,
 # verify, restart (SPEC §2). Validates with nginx -t before touching the
 # running service; reloads only when a placed file changed.
 #
@@ -64,6 +64,7 @@ install -d -m 0755 /etc/nginx/conf.d
 place "${staging}/nginx.conf" /etc/nginx/nginx.conf
 place "${staging}/default.conf" /etc/nginx/conf.d/default.conf
 place "${staging}/fallback.conf" /etc/nginx/conf.d/fallback.conf
+place "${staging}/xform.conf" /etc/nginx/conf.d/xform.conf
 
 # --- validate + (re)start -----------------------------------------------------
 

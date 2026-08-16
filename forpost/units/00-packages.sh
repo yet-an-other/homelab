@@ -30,6 +30,7 @@ packages=(
   nginx
   ufw
   unattended-upgrades
+  acl
 )
 
 apt-get update

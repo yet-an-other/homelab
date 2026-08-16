@@ -3,7 +3,8 @@
 # Skeleton transport (issue #8) + baseline environment units 00-31 (issue #9)
 # + xray (issue #10) + the client-facing path: cert, nginx SNI entry, ufw
 # (issue #13) + all traffic chained via alwyzon (issue #11) + full routing:
-# bastion outbound and the privileged split (issue #12).
+# bastion outbound and the privileged split (issue #12) + the xform
+# observability deployment (issue #14).
 #
 # Ordering note (#13): when the deploy will change anything, nginx is
 # brought up FIRST (bootstrap --only 41) so the fallback vhost is live
@@ -158,13 +159,30 @@
         - nginx.conf
         - default.conf
         - fallback.conf
+        - xform.conf
       register: forpost_nginx_render
+
+    - name: create the xform staging directory
+      ansible.builtin.file:
+        path: "{{ forpost_home }}/xform"
+        state: directory
+        mode: "0755"
+
+    - name: render the xform service into staging
+      ansible.builtin.template:
+        src: templates/xform.service.j2
+        dest: "{{ forpost_home }}/xform/xform.service"
+        owner: root
+        group: root
+        mode: "0644"
+      register: forpost_xform_service
 
     - name: bring nginx up before xray moves behind it (SPEC §7 ordering)
       ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh --only 41"
       when: forpost_push is changed
         or forpost_xray_config is changed
         or forpost_nginx_render is changed
+        or forpost_xform_service is changed
         or forpost_bootstrap_args | length > 0
 
     - name: run forpost bootstrap
@@ -172,7 +190,15 @@
       when: forpost_push is changed
         or forpost_xray_config is changed
         or forpost_nginx_render is changed
+        or forpost_xform_service is changed
         or forpost_bootstrap_args | length > 0
+
+    - name: check for an xform release on every run
+      ansible.builtin.command: "{{ forpost_home }}/bootstrap.sh --only 43"
+      register: forpost_xform_update
+      changed_when: >-
+        '43-xform: installed ' in forpost_xform_update.stdout
+        or '43-xform: placed ' in forpost_xform_update.stdout
 
     - name: collect per-unit logs
       ansible.builtin.find:
@@ -188,30 +214,102 @@
       delegate_to: localhost
       become: false  # runs on the controller; the play-level become needs a sudo password there
 
+    - name: verify the public xform endpoint
+      ansible.builtin.uri:
+        url: "https://{{ forpost.domain }}:9443/"
+        status_code: 200
+        validate_certs: true
+      delegate_to: localhost
+      become: false
+
     - name: verify the bootstrap wrote per-unit logs
       ansible.builtin.assert:
         that: forpost_unit_logs.matched > 0
         fail_msg: no per-unit logs in /var/log/forpost — bootstrap did not run any unit
         quiet: true
 
-    - name: verify xray and nginx are active and enabled
-      ansible.builtin.command: "{{ item }}"
+    - name: collect xray nginx and xform service states
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
       loop:
-        - systemctl is-active xray
-        - systemctl is-enabled xray
-        - systemctl is-active nginx
-        - systemctl is-enabled nginx
+        - xray
+        - nginx
+        - xform
       register: forpost_service_state
       changed_when: false
 
     - name: assert service states
       ansible.builtin.assert:
         that:
-          - forpost_service_state.results[0].stdout == "active"
-          - forpost_service_state.results[1].stdout == "enabled"
-          - forpost_service_state.results[2].stdout == "active"
-          - forpost_service_state.results[3].stdout == "enabled"
-        fail_msg: xray/nginx not active+enabled — see journalctl on the node
+          - forpost_service_state.results[0].status.ActiveState == "active"
+          - forpost_service_state.results[0].status.UnitFileState == "enabled"
+          - forpost_service_state.results[1].status.ActiveState == "active"
+          - forpost_service_state.results[1].status.UnitFileState == "enabled"
+          - forpost_service_state.results[2].status.ActiveState == "active"
+          - forpost_service_state.results[2].status.UnitFileState == "enabled"
+        fail_msg: xray/nginx/xform not active+enabled — see journalctl on the node
+        quiet: true
+
+    - name: verify the local xform endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9090/
+        status_code: 200
+
+    - name: verify xray StatsService
+      ansible.builtin.command: >-
+        /usr/local/bin/xray api statsquery --server=127.0.0.1:8080
+      changed_when: false
+
+    - name: collect local listening-port facts
+      community.general.listen_ports_facts:
+        command: ss
+
+    - name: collect xform and StatsService listener addresses
+      ansible.builtin.set_fact:
+        forpost_xform_listener_addresses: >-
+          {{ ansible_facts.tcp_listen
+             | selectattr('port', 'equalto', 9090)
+             | map(attribute='address') | unique | sort }}
+        forpost_stats_listener_addresses: >-
+          {{ ansible_facts.tcp_listen
+             | selectattr('port', 'equalto', 8080)
+             | map(attribute='address') | unique | sort }}
+
+    - name: assert xform and StatsService are loopback only
+      ansible.builtin.assert:
+        that:
+          - forpost_xform_listener_addresses == ['127.0.0.1']
+          - forpost_stats_listener_addresses == ['127.0.0.1']
+        fail_msg: xform and Xray StatsService must listen on IPv4 loopback only
+        quiet: true
+
+    - name: inspect xform path permissions as the service user
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/etc/xray/config.json
+        - /var/lib/xform
+        - /var/lib/forpost/xform
+      become_user: xform
+      register: forpost_xform_paths
+
+    - name: assert xform path permissions
+      ansible.builtin.assert:
+        that:
+          - forpost_xform_paths.results[0].stat.readable
+          - not forpost_xform_paths.results[0].stat.writeable
+          - forpost_xform_paths.results[1].stat.writeable
+          - not forpost_xform_paths.results[2].stat.writeable
+        fail_msg: xform must have read-only config access and isolated writable application state
+        quiet: true
+
+    - name: assert xform systemd hardening
+      ansible.builtin.assert:
+        that:
+          - forpost_service_state.results[2].status.User == "xform"
+          - forpost_service_state.results[2].status.NoNewPrivileges == "yes"
+          - forpost_service_state.results[2].status.ProtectSystem == "strict"
+        fail_msg: xform must run unprivileged with the expected systemd hardening
         quiet: true
 
     - name: verify the firewall is locked down (SPEC §5)
@@ -227,12 +325,12 @@
              | map('regex_replace', '^(\S+)( \(v6\))?\s+ALLOW.*$', '\1')
              | unique | sort }}
 
-    - name: assert ufw exposes only ssh and the entry port
+    - name: assert ufw exposes only ssh the VPN entry and xform
       ansible.builtin.assert:
         that:
           - "'Status: active' in forpost_ufw_status.stdout"
-          - forpost_ufw_allowed == ["42318/tcp", "443/tcp"]
+          - forpost_ufw_allowed == ["42318/tcp", "443/tcp", "9443/tcp"]
         fail_msg: >-
-          ufw must be active with only 42318/tcp and 443/tcp allowed —
+          ufw must be active with only 42318/tcp, 443/tcp and 9443/tcp allowed —
           got: {{ forpost_ufw_status.stdout }}
         quiet: true

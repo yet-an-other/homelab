@@ -1,0 +1,44 @@
+[Unit]
+Description=xform — read-only observability panel for xray
+After=network-online.target xray.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xform
+Group=xform
+ExecStart=/usr/local/bin/xform
+Restart=on-failure
+RestartSec=5
+UMask=0027
+
+StateDirectory=xform
+StateDirectoryMode=0750
+Environment=XFORM_LISTEN=127.0.0.1:9090
+Environment=XFORM_XRAY_API=127.0.0.1:8080
+Environment=XFORM_XRAY_CONFIG=/usr/local/etc/xray/config.json
+Environment=XFORM_DB=/var/lib/xform/xform.db
+Environment=XFORM_XRAY_UNIT=xray.service
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target
