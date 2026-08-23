@@ -30,6 +30,16 @@
   mirrors dest's handshake even for fully authenticated clients — a dead
   dest kills valid sessions too (diagnosed in #10).
 
+  PROXY protocol, both hops: the nginx stream server sends PROXY v1
+  to its upstreams, so this inbound sets sockopt.acceptProxyProtocol and
+  sees the real client address (logs, routing) instead of 127.0.0.1;
+  realitySettings.xver: 1 sends PROXY v1 on to the dest, where the fallback
+  vhost listens proxy_protocol and restores the real address for its
+  upstream headers. Both pairs must stay in lockstep — one-sided flips
+  drop every connection (nginx/xray) or kill dest mirroring (#10) —
+  asserted on every apply by tests/proxy-protocol.sh, which the play runs
+  after rendering, before any unit flips a pair.
+
   Outbound reality field naming: the pinned xray (v26.3.27) renamed the
   client-side publicKey field to `password` — the value is the upstream's
   x25519 PUBLIC key — and `network` tcp to `raw` (tcp still accepted).
@@ -103,9 +113,11 @@
       "streamSettings": {
         "network": "tcp",
         "security": "reality",
+        "sockopt": { "acceptProxyProtocol": true },
         "realitySettings": {
           "show": false,
           "dest": "127.0.0.1:8443",
+          "xver": 1,
           "serverNames": [forpost.server_name],
           "privateKey": forpost.private_key,
           "shortIds": forpost.short_ids

@@ -3,12 +3,22 @@
 # content, reverse-proxied from the real public site (served by frontgate).
 # Host is preserved towards the upstream per frontgate's fallback.conf
 # conventions; the upstream vhost is selected by our TLS SNI.
+#
+# xray dials this vhost with a PROXY protocol v1 header (realitySettings
+# xver: 1 in xray-config.json.j2); the listen flag parses it and the real_ip
+# pair restores the real client address, so X-Real-IP / X-Forwarded-For
+# carry it to speed.bdgn.me instead of 127.0.0.1. Both sides must match —
+# a plain-TLS dial here (xver 0) would be rejected by the listen flag,
+# killing Reality's dest mirroring (#10). Verified by tests/proxy-protocol.sh.
 
 server {
-        listen 127.0.0.1:8443 ssl;
+        listen 127.0.0.1:8443 ssl proxy_protocol;
         http2 on;
 
         server_name {{ forpost.server_name }};
+
+        set_real_ip_from 127.0.0.1;
+        real_ip_header proxy_protocol;
 
         ssl_certificate /usr/ssl/fullchain.crt;
         ssl_certificate_key /usr/ssl/certificate.key;

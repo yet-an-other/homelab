@@ -25,7 +25,7 @@
 #      bastion's xray (bastion's is vm-bastion/)
 #
 # Re-running a subset of units:
-#   ansible-playbook -i ansible/inventory.secret.yaml forpost/create-forpost.yaml -e forpost_bootstrap_args="--from 40"
+#   ansible-playbook -i ansible/inventory.secret.yaml forpost/create-forpost.yaml -e "forpost_bootstrap_args='--from 40'"
 #
 # Idempotency (SPEC §9): bootstrap only runs when the pushed bundle changed or
 # forpost_bootstrap_args is given — a second ./apply.sh forpost on an
@@ -124,6 +124,12 @@
         sites: "-d {{ forpost.domain }}"
         # nginx may not be running on first issuance; 41-nginx starts it
         reloadcmd: "systemctl reload nginx || true"
+
+    - name: assert the PROXY protocol pairs are in lockstep before anything flips
+      ansible.builtin.command: "{{ playbook_dir }}/tests/proxy-protocol.sh"
+      delegate_to: localhost
+      become: false
+      changed_when: false
 
     - name: create the xray config directory
       ansible.builtin.file:

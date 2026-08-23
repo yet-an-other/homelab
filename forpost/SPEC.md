@@ -68,6 +68,7 @@ forpost/
 │   ├── xform.conf.j2
 │   └── xform.service.j2
 ├── tests/
+│   ├── proxy-protocol.sh    # PROXY protocol pair lockstep (run by the play after render)
 │   └── xform-updater.sh     # isolated release/update lifecycle seam
 └── user-data.yaml           # slim reachability-only cloud-init, pasted at VM creation
 ```
@@ -201,9 +202,11 @@ no authentication or TLS. Existing user email tags are the per-user statistics i
   "streamSettings": {
     "network": "tcp",
     "security": "reality",
+    "sockopt": { "acceptProxyProtocol": true },
     "realitySettings": {
       "show": false,
       "dest": "127.0.0.1:8443",
+      "xver": 1,
       "serverNames": ["{{ forpost.server_name }}"],
       "privateKey": "{{ forpost.private_key }}",
       "shortIds": {{ forpost.short_ids | to_json }}
@@ -212,6 +215,14 @@ no authentication or TLS. Existing user email tags are the per-user statistics i
   "sniffing": { "enabled": true, "destOverride": ["http", "tls"], "routeOnly": true }
 }
 ```
+
+**PROXY protocol, both hops.** The nginx stream server sends PROXY protocol v1 to its upstreams, so
+the inbound sets `sockopt.acceptProxyProtocol` and xray attributes connections to the real client
+address instead of `127.0.0.1`; `realitySettings.xver: 1` sends PROXY v1 on to the dest, where the
+fallback vhost restores the real address. Both pairs must stay in lockstep — a one-sided flip drops
+every connection or kills dest mirroring (#10) — so the play runs `tests/proxy-protocol.sh` (renders
+the templates with fixtures, asserts each directive and the pairwise consistency) after rendering and
+before any unit places a config.
 
 **Outbounds** (order matters — alwyzon first, defense-in-depth):
 
@@ -264,14 +275,18 @@ Full frontgate arrangement (`frontgate/` is the reference implementation), with 
 only live inbound. Template files:
 
 - `nginx.conf.j2` — http block (includes `conf.d`) + **stream block**: `listen 443`,
-  `ssl_preread on`; SNI map:
+  `ssl_preread on`, `proxy_protocol on` (PROXY v1 to every upstream — see §6); SNI map:
   - `{{ forpost.server_name }}` → `127.0.0.1:20001` (xray)
   - `default` → `127.0.0.1:20000` (default site)
 - `default.conf.j2` — TLS server on `127.0.0.1:20000`, `server_name _;`, `return 418;`
-  (frontgate pattern; cert per below)
+  (frontgate pattern; cert per below). Listens `proxy_protocol` (the stream default route sends it)
+  and restores the real client address via `set_real_ip_from 127.0.0.1` + `real_ip_header
+  proxy_protocol` — plain connections are rejected by design
 - `fallback.conf.j2` — TLS server on `127.0.0.1:8443`, `server_name {{ forpost.server_name }};`,
   reverse-proxies the **real** `https://speed.bdgn.me` (public, served by frontgate) so probes see a
-  genuine site; preserve `Host` towards upstream per frontgate's fallback.conf conventions
+  genuine site; preserve `Host` towards upstream per frontgate's fallback.conf conventions. Listens
+  `proxy_protocol` (xray dials with `xver: 1`, §6) and restores the real client address, so
+  `X-Real-IP`/`X-Forwarded-For` towards speed.bdgn.me carry the true client, not `127.0.0.1`
 - `xform.conf.j2` — public TLS server on `9443`, `server_name {{ forpost.domain }}`, proxying the full
   origin to xform at `127.0.0.1:9090` with no URI rewrite. It deliberately adds no proxy authentication
   or source restriction; authentication belongs to xform and public pre-auth exposure is accepted.
@@ -393,7 +408,11 @@ unchanged (idempotency, #5).
 6. `./apply.sh forpost`
 
 **Re-run / iterate**: `./apply.sh forpost` (no-op when unchanged); to re-run only the VPN layer,
-`ansible-playbook … -e forpost_bootstrap_args="--from 40"`.
+`ansible-playbook … -e "forpost_bootstrap_args='--from 40'"` (inner quotes keep the
+argument intact — the unquoted form reaches bootstrap.sh as a bare `--from`). PROXY protocol
+deploys flip both ends of a pair in one run (nginx via the play's `--only 41` pre-step, xray in unit
+40); new connections can fail for the seconds between the two flips — unavoidable for a coordinated
+switchover, and healed as soon as 40 completes.
 
 ## 11. Verification checklist
 
@@ -401,6 +420,10 @@ unchanged (idempotency, #5).
 - [ ] `systemctl is-active xray nginx xform` all active; UFW shows only 42318 + 443 + 9443/tcp
 - [ ] `curl -sv https://<domain>/` serves the real speed.bdgn.me content (fallback)
 - [ ] probe with wrong SNI → 418
+- [ ] loopback sites speak PROXY protocol only: `tests/proxy-protocol.sh` is green; a plain (no-PP)
+      connection to `127.0.0.1:20000`/`:8443` is refused, while `curl https://<domain>/` through 443
+      still serves the fallback content (both PP hops live)
+- [ ] `/var/log/nginx/fallback.access.log` records real client addresses (not `127.0.0.1`)
 - [ ] `curl -fsS https://<domain>:9443/` reaches xform with a valid certificate
 - [ ] xform listens only on `127.0.0.1:9090`; Xray StatsService listens only on `127.0.0.1:8080`
 - [ ] `xray api statsquery --server=127.0.0.1:8080` succeeds

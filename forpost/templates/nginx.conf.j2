@@ -35,6 +35,12 @@ http {
 ## ssl_preread the SNI: the live VLESS+Reality inbound goes to xray,
 ## everything else gets the 418 default site. The map anticipates more
 ## inbounds (SPEC §12 fog: xhttp, tcp+tls).
+##
+## proxy_protocol on: every upstream of this server block (xray AND the
+## default site) receives a PROXY protocol v1 header so xray sees the real
+## client address instead of 127.0.0.1 (xray: sockopt.acceptProxyProtocol;
+## default site: listen proxy_protocol — both sides must match, verified by
+## tests/proxy-protocol.sh).
 
 stream {
 
@@ -67,6 +73,7 @@ stream {
                 listen [::]:443 reuseport;
                 proxy_pass      $upstream_map;
                 ssl_preread     on;
+                proxy_protocol  on;
 
                 proxy_connect_timeout 10s;
                 proxy_timeout 1h;

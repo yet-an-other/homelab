@@ -1,11 +1,20 @@
 # Default site (SPEC §7): anything that isn't the Reality SNI lands here
 # via the stream SNI map's `default` and gets a 418.
+#
+# The stream server block sends a PROXY protocol v1 header to this vhost
+# (nginx.conf.j2); the listen flag parses it and the real_ip pair restores
+# the real client address into $remote_addr for logs and downstream headers.
+# A direct connection without the header would be rejected — by design,
+# this vhost is only ever dialed by the local stream proxy.
 
 server {
-        listen 127.0.0.1:20000 ssl default_server;
+        listen 127.0.0.1:20000 ssl proxy_protocol default_server;
         http2 on;
 
         server_name _;
+
+        set_real_ip_from 127.0.0.1;
+        real_ip_header proxy_protocol;
 
         ssl_certificate /usr/ssl/fullchain.crt;
         ssl_certificate_key /usr/ssl/certificate.key;
