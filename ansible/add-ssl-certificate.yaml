@@ -33,10 +33,29 @@
         creates: /usr/ssl/fullchain.crt      
 
     - name: issue certificate
+      # Idempotency guard: file existence is not enough. If the requested
+      # names change (e.g. a domain rename in inventory), the certificate
+      # must be re-issued even though /usr/ssl/fullchain.crt already exists
+      # (post-mortem: cert silently kept covering the old domain after a
+      # rename). Skip only when the deployed cert covers EVERY requested name.
       no_log: true
       shell: |
         export CF_Token="{{ cf_token }}"
         export CF_Zone_ID="{{ cf_zone_id }}"
+        covered=1
+        for name in {{ sites }}; do
+          case "$name" in -d) continue ;; esac
+          if [ -f /usr/ssl/fullchain.crt ] && \
+             openssl x509 -in /usr/ssl/fullchain.crt -noout -ext subjectAltName 2>/dev/null | \
+             grep -qw -- "$name"; then
+            continue
+          fi
+          covered=0
+        done
+        if [ "$covered" = 1 ]; then
+          echo "certificate already covers all requested names"
+          exit 0
+        fi
         ~/.acme.sh/acme.sh --issue \
         {{ sites }} \
         --force \
@@ -45,7 +64,7 @@
         --key-file /usr/ssl/certificate.key \
         --fullchain-file /usr/ssl/fullchain.crt \
         --reloadcmd "{{ reloadcmd }}"
-      args:
-        creates: /usr/ssl/fullchain.crt
+      register: ssl_cert_issue
+      changed_when: "'already covers' not in ssl_cert_issue.stdout"
 # --server letsencrypt.org
 # --staging
