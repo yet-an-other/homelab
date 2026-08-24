@@ -20,9 +20,10 @@
   # settings stop mattering for the split-horizon zone. DoH/DoT (853/443)
   # can't be caught this way — those clients still need remote DNS
   # 192.168.30.1.
-  # The sniff-rewrite (dropping routeOnly) is deliberately NOT enabled yet:
-  # it would send sniffed domains to bastion's dns module, which is broken
-  # until the 159c2c2 fix is deployed there.
+  # The sniff-rewrite (dropping routeOnly) is deliberately NOT enabled yet.
+  # Bastion side (vm-bastion) routes privileged domain:bdgn.me traffic to
+  # wg-in via its own vlessRoute-marked domain rule — clients passing domains
+  # through the tunnel (mobile apps) depend on it.
 
   The inbound sits behind the nginx SNI map (#13): nginx owns public 443
   and ssl_prereads the SNI here. The reality `dest` (127.0.0.1:8443) is the
