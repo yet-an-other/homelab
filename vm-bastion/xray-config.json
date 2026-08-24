@@ -39,6 +39,11 @@
                 {
                     "id": "{{ bastion.user_3 }}",
                     "flow": "xtls-rprx-vision"
+                },
+                {
+                    "id": "{{ forpost.bastion.uuid }}",
+                    "flow": "xtls-rprx-vision",
+                    "email": "forpost"
                 }
                 ],
                 "decryption": "none"
@@ -54,7 +59,7 @@
                         "rspeed.{{ domain_name }}"
                     ],
                     "privateKey": "{{ bastion.private_key }}",
-                    "shortIds": ["01", "02", "03"]
+                    "shortIds": ["01", "02", "03", "05"]
                 }
             },
             "sniffing": {
@@ -79,6 +84,10 @@
                     },
                     {
                         "id": "{{ bastion.user_3 }}"
+                    },
+                    {
+                        "id": "{{ forpost.bastion.uuid }}",
+                        "email": "forpost"
                     }
                 ],
                 "decryption": "none"
@@ -95,7 +104,7 @@
                     "xver": 0,
                     "serverNames": ["xspeed.{{ domain_name }}"],
                     "privateKey": "{{ bastion.private_key }}",
-                    "shortIds": ["01", "02", "03"]
+                    "shortIds": ["01", "02", "03", "05"]
                 }
             },
             "sniffing": {
@@ -170,11 +179,23 @@
           {
               "type": "field",
               "inboundTag": ["dns-in"],
+              "ip": ["192.168.30.1/32"],
               "outboundTag": "wg-in"
           },
           {
               "type": "field",
               "ip": ["192.168.0.0/16"],
+              "vlessRoute": "1",
+              "outboundTag": "wg-in"
+          },
+          {
+              "type": "field",
+              "domain": ["domain:loft.bdgn.me", "domain:ar-speed.bdgn.me", "domain:alwz.bdgn.me"],
+              "outboundTag": "direct"
+          },
+          {
+              "type": "field",
+              "domain": ["domain:bdgn.me"],
               "vlessRoute": "1",
               "outboundTag": "wg-in"
           },
