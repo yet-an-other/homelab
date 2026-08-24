@@ -230,15 +230,9 @@
         timeout: 30
       delegate_to: localhost
       become: false  # runs on the controller; the play-level become needs a sudo password there
-
-    - name: verify the backup domain answers on 443 (manual A record, SPEC §10)
-      when: forpost.backup_domain is defined
-      ansible.builtin.wait_for:
-        host: "{{ forpost.backup_domain }}"
-        port: 443
-        timeout: 30
-      delegate_to: localhost
-      become: false
+      # NOTE: the backup domain's A record is intentionally NOT verified here —
+      # it may be created after client links are handed out (SPEC §10); the
+      # cert still issues because the DNS-01 challenge only needs the zone.
 
     - name: verify the public xform endpoint
       ansible.builtin.uri:
