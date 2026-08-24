@@ -56,6 +56,15 @@
   {%- set _ = clients.append({"id": u.uuid | mandatory("forpost user is missing uuid"), "flow": "xtls-rprx-vision", "email": u.name | mandatory("forpost user is missing name")}) -%}
 {%- endfor -%}
 {%- set privileged = forpost.users | selectattr('privileged') | map(attribute='name') | list -%}
+{#- Client-facing names (SPEC §6): the primary server_name plus the optional
+    backup domain (inventory `forpost.backup_domain`, research:
+    docs/research/xray-multidomain.md). Reality gates only the auth attempt on
+    SNI membership — one key/user set serves every listed name; every other
+    SNI still gets dest mirroring. Omit the var and nothing changes. -#}
+{%- set server_names = [forpost.server_name] -%}
+{%- if forpost.backup_domain is defined -%}
+  {%- set _ = server_names.append(forpost.backup_domain) -%}
+{%- endif -%}
 {#- Bastion routes internal IPs (192.168/16) via wg-in only for UUIDs
     carrying the vlessRoute "1" marker (group 3 = 0001). xray auth ignores
     group 3 (research Q1), so the plain registered UUID authenticates; the
@@ -119,7 +128,7 @@
           "show": false,
           "dest": "127.0.0.1:8443",
           "xver": 1,
-          "serverNames": [forpost.server_name],
+          "serverNames": server_names,
           "privateKey": forpost.private_key,
           "shortIds": forpost.short_ids
         }

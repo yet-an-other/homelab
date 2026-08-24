@@ -105,6 +105,8 @@ forpost:
 forpost:
   domain: fp1.bdgn.me              # node public name; manual A record → ansible_host
   server_name: fp1.bdgn.me         # Reality SNI; normally == domain
+  backup_domain: htz.bdgn.me       # OPTIONAL: second client-facing name — same inbound,
+                                   # users, fallbacks; own manual A record required (§10)
   private_key: <x25519-private>    # xray x25519
   short_ids: ["01", "02"]
   users:
@@ -208,7 +210,7 @@ TLS. Existing user email tags are the per-user statistics identities.
       "show": false,
       "dest": "127.0.0.1:8443",
       "xver": 1,
-      "serverNames": ["{{ forpost.server_name }}"],
+      "serverNames": ["{{ forpost.server_name }}"{% if forpost.backup_domain is defined %}, "{{ forpost.backup_domain }}"{% endif %}],
       "privateKey": "{{ forpost.private_key }}",
       "shortIds": {{ forpost.short_ids | to_json }}
     }
@@ -278,13 +280,16 @@ only live inbound. Template files:
 - `nginx.conf.j2` — http block (includes `conf.d`) + **stream block**: `listen 443`,
   `ssl_preread on`, `proxy_protocol on` (PROXY v1 to every upstream — see §6); SNI map:
   - `{{ forpost.server_name }}` → `127.0.0.1:20001` (xray)
+  - `{{ forpost.backup_domain }}` → `127.0.0.1:20001` (same inbound; only when the optional
+    `backup_domain` var is set — one node, two public names, same users)
   - `default` → `127.0.0.1:20000` (default site)
 - `default.conf.j2` — TLS server on `127.0.0.1:20000`, `server_name _;`, `return 418;`
   (frontgate pattern; cert per below). Listens `proxy_protocol` (the stream default route sends it)
   and restores the real client address via `set_real_ip_from 127.0.0.1` + `real_ip_header
   proxy_protocol` — plain connections are rejected by design
-- `fallback.conf.j2` — TLS server on `127.0.0.1:8443`, `server_name {{ forpost.server_name }};`,
-  reverse-proxies the **real** `https://speed.bdgn.me` (public, served by frontgate) so probes see a
+- `fallback.conf.j2` — TLS server on `127.0.0.1:8443`, `server_name {{ forpost.server_name }}`
+  (plus `{{ forpost.backup_domain }}` when set — the cert must cover every served name or the
+  camouflage breaks for the extra one), reverse-proxies the **real** `https://speed.bdgn.me` (public, served by frontgate) so probes see a
   genuine site; preserve `Host` towards upstream per frontgate's fallback.conf conventions. Listens
   `proxy_protocol` (xray dials with `xver: 1`, §6) and restores the real client address, so
   `X-Real-IP`/`X-Forwarded-For` towards speed.bdgn.me carry the true client, not `127.0.0.1`
@@ -294,7 +299,10 @@ only live inbound. Template files:
 
 **Certificate**: TLS cert for `{{ forpost.domain }}` via the existing
 `ansible/add-ssl-certificate.yaml` (Cloudflare DNS challenge; `cf_token`/`cf_zone_id` already in
-secrets), installed before `41-nginx.sh` runs. Used by the fallback, default, and xform sites.
+secrets), installed before `41-nginx.sh` runs. With `backup_domain` set, one SAN cert covers both
+names (`docs/research/xray-multidomain.md`: one inbound serves both SNIs; a shared SAN cert also
+publicly links the names via CT logs — two certs would be the unlinkable alternative). Used by the
+fallback, default, and xform sites.
 Note: this is cert issuance only — the DNS *A record* stays manual (§10).
 
 ### xform lifecycle (#14)
@@ -364,6 +372,8 @@ vless://<uuid>@<domain>:443?security=reality&sni=<server_name>&fp=chrome&pbk=<re
 ```
 
 `pbk` derived from `forpost.private_key` via `xray x25519 -i`. UUIDs are plain v4 — no marker semantics.
+With `backup_domain` set, the same UUID/`pbk`/`sid` links work verbatim against
+`<backup_domain>` (`sni=<backup_domain>`) — one user set, two entry names.
 
 **Client DNS (split horizon).** `*.bdgn.me` is a split-horizon zone: internal-only names
 (`syncthing`, `s3`, `speed-test`, …) exist ONLY on the internal resolver `192.168.30.1` — public
@@ -402,7 +412,8 @@ unchanged (idempotency, #5).
 **First deploy**
 
 1. Create an Ubuntu VM (x86_64 or arm64) at any provider; paste `forpost/user-data.yaml` as user-data
-2. Manual A record: `forpost.domain` → VM IP (Cloudflare automation is fog)
+2. Manual A record: `forpost.domain` → VM IP (Cloudflare automation is fog); with `backup_domain`
+   set, an A record for it → the same VM IP
 3. Generate key material (§3 commands); fill the `forpost` host entry + vars section in
    `inventory.secret.yaml`
 4. **Upstream clients**: add forpost's client UUID to bastion's xray clients (`vm-bastion/`) and to

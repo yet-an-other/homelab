@@ -67,6 +67,10 @@ proxmox:
 #     forpost:
 #       domain: fp1.bdgn.me     # node public name; manual A record -> ansible_host
 #       server_name: fp1.bdgn.me # Reality SNI; normally == domain
+#       backup_domain: htz.bdgn.me # OPTIONAL second public name: same inbound, users,
+#                              # fallbacks; needs its own manual A record and lands in
+#                              # serverNames, the nginx SNI map, the fallback
+#                              # server_name and the cert SANs (SPEC §6/§7)
 #       private_key: ""         # xray x25519 private key
 #       short_ids: ["01", "02"]
 #       users:

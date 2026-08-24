@@ -55,8 +55,17 @@ stream {
         map $ssl_preread_server_name $upstream_map {
 
                 default                 main;
-
-                {{ forpost.server_name }}     vless-reality;
+{#- client-facing names: primary server_name plus the optional backup
+    domain (inventory forpost.backup_domain) — same inbound, same users
+    (SPEC §6/§7, docs/research/xray-multidomain.md). Built as explicit
+    strings because ansible renders with trim_blocks — inline loops
+    collapse their newlines. -#}
+{%- set sni_names = [forpost.server_name] -%}
+{%- if forpost.backup_domain is defined -%}
+  {%- set _ = sni_names.append(forpost.backup_domain) -%}
+{%- endif -%}
+{%- set sni_map = sni_names | map('regex_replace', '^(.*)$', '                \\1     vless-reality;') | list -%}
+{{ '\n' ~ sni_map | join('\n') }}
         }
 
 

@@ -49,6 +49,9 @@
         that:
           - forpost.domain | length > 0
           - forpost.server_name | length > 0
+          # optional backup entry point: must not duplicate the primary names
+          - forpost.backup_domain is not defined or forpost.backup_domain != forpost.domain
+          - forpost.backup_domain is not defined or forpost.backup_domain != forpost.server_name
           - forpost.private_key | length > 0
           - forpost.short_ids | length > 0
           - forpost.users | length > 0
@@ -121,7 +124,11 @@
       import_tasks: ../ansible/add-ssl-certificate.yaml
       vars:
         container_hostname: "{{ inventory_hostname }}"
-        sites: "-d {{ forpost.domain }}"
+        # one SAN cert: primary + optional backup domain (SPEC §6/§7) — the
+        # fallback vhost serves both names, so the cert must cover them all
+        sites: >-
+          -d {{ forpost.domain }}
+          {%- if forpost.backup_domain is defined %} -d {{ forpost.backup_domain }}{% endif %}
         # nginx may not be running on first issuance; 41-nginx starts it
         reloadcmd: "systemctl reload nginx || true"
 
@@ -223,6 +230,15 @@
         timeout: 30
       delegate_to: localhost
       become: false  # runs on the controller; the play-level become needs a sudo password there
+
+    - name: verify the backup domain answers on 443 (manual A record, SPEC §10)
+      when: forpost.backup_domain is defined
+      ansible.builtin.wait_for:
+        host: "{{ forpost.backup_domain }}"
+        port: 443
+        timeout: 30
+      delegate_to: localhost
+      become: false
 
     - name: verify the public xform endpoint
       ansible.builtin.uri:

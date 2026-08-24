@@ -150,6 +150,61 @@ else
   pass "pair: reality xver ⟺ fallback proxy_protocol"
 fi
 
+# --- optional backup domain (forpost.backup_domain, SPEC §3/§6/§7) --------------
+# Without the var the renders above must stay single-name; with it every
+# layer must carry BOTH names in lockstep (xray serverNames, nginx SNI map,
+# fallback server_name). A name present in one layer only either drops that
+# name's VPN connections (map/serverNames) or breaks its camouflage
+# (fallback) — docs/research/xray-multidomain.md.
+fixture2="${tmp}/fixture-backup.json"
+jq '.forpost.backup_domain = "fp2.example.net"' "${fixture}" >"${fixture2}"
+
+render_e() {
+  local src="$1" dest="$2" fx="$3"
+  ansible localhost, -c local -m template \
+    -a "src=${here}/templates/${src} dest=${dest}" \
+    -e "@${fx}" >/dev/null 2>&1 || { echo "render ${src} failed" >&2; exit 2; }
+}
+render_e nginx.conf.j2 "${tmp}/nginx-backup.conf" "${fixture2}"
+render_e fallback.conf.j2 "${tmp}/fallback-backup.conf" "${fixture2}"
+render_e xray-config.json.j2 "${tmp}/xray-backup.json" "${fixture2}"
+
+layer_names() {
+  case "$1" in
+    xray)  jq -r '.inbounds[] | select(.tag == "vless-reality")
+                  | .streamSettings.realitySettings.serverNames | sort | join(" ")' "${tmp}/xray-backup.json" ;;
+    nginx) grep -E 'vless-reality;' "${tmp}/nginx-backup.conf" \
+             | sed -E 's/[[:space:]]*([a-z0-9.-]+\.[a-z]+)[[:space:]]+vless-reality;.*/\1/' \
+             | xargs | tr ' ' '\n' | sort | paste -sd' ' - ;;
+    fallback) sed -nE 's/^[[:space:]]*server_name[[:space:]]+([^;]+);.*/\1/p' "${tmp}/fallback-backup.conf" \
+             | xargs | tr ' ' '\n' | sort | paste -sd' ' - ;;
+  esac
+}
+
+for layer in xray nginx fallback; do
+  got="$(layer_names "${layer}")"
+  want="fp1.example.net fp2.example.net"
+  if [ "${got}" = "${want}" ]; then
+    pass "backup: ${layer} serves both names"
+  else
+    fail "backup: ${layer} names are '${got}', want '${want}'"
+  fi
+done
+
+# and without the var: exactly one name everywhere (regression guard)
+xray_single="$(jq -r '.inbounds[] | select(.tag == "vless-reality")
+                    | .streamSettings.realitySettings.serverNames | join(" ")' "${tmp}/xray-config.json")"
+if [ "${xray_single}" = "fp1.example.net" ]; then
+  pass "no backup var: xray stays single-name"
+else
+  fail "no backup var: xray serverNames unexpectedly '${xray_single}'"
+fi
+if ! grep -q "fp2.example.net" "${tmp}/nginx.conf" "${tmp}/fallback.conf"; then
+  pass "no backup var: nginx/fallback stay single-name"
+else
+  fail "no backup var: backup name leaked into a render without the var"
+fi
+
 echo
 if [ "${failures}" -gt 0 ]; then
   echo "RED: ${failures} check(s) failed"
