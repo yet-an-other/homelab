@@ -1,5 +1,5 @@
 - name: set variables for vm creation
-  hosts: 'prox-n2'
+  hosts: 'prox-n3'
   gather_facts: true
   vars:
     proxmox:
@@ -116,6 +116,7 @@
       delegate_to: "{{ vm.hostname }}"
       become: yes
       no_log: true
+      register: xray_config
       copy:
         dest: /opt/xray/config.json
         content: "{{ lookup('template', 'xray-config.json') }}"
@@ -123,6 +124,14 @@
         group: xrayuser
         mode: '0640'
         force: yes 
+
+    - name: restart xray on config change
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      when: xray_config.changed
+      service:
+        name: xray
+        state: restarted
 
     - name: enable xray, start after certs are in place
       delegate_to: "{{ vm.hostname }}"
