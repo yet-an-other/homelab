@@ -28,7 +28,7 @@
     - name: create container
       community.general.proxmox_kvm:
         node            : '{{ proxmox_node }}'
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         newid           : '{{ container_vmid }}'
@@ -48,7 +48,7 @@
 
     - name: start vm
       proxmox_kvm:
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         name            : '{{ container_hostname }}'
@@ -58,7 +58,7 @@
 
     - name: get vm info
       community.general.proxmox_vm_info:
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         name            : '{{ container_hostname }}'
@@ -97,7 +97,7 @@
 
     - name: restart vm
       proxmox_kvm:
-        api_host: '{{ proxmox_node }}'
+        api_host: '{{ proxmox_api_host | default(ansible_host) }}'
         api_user: 'root@pam'
         api_password: '{{ proxmox_password }}'
         name        : '{{ container_hostname }}'

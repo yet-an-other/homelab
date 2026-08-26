@@ -1,6 +1,7 @@
 # creates container, starts it, add ssh key, and creates host entry in ansible inventory
 # Inputs:
 # - proxmox_node: the proxmox node to create the container
+# - proxmox_api_host: optional address of the node's API endpoint (defaults to ansible_host)
 # - proxmox_password: the password for the proxmox node
 # - container_hostname: the hostname of the container
 # - container_vmid: the vmid of the container
@@ -65,7 +66,7 @@
 
     - name: get container info
       community.proxmox.proxmox_vm_info:
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         vmid            : '{{ container_vmid }}'
@@ -75,7 +76,7 @@
     - name: create container
       community.general.proxmox:
         node            : '{{ proxmox_node }}'
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         password        : '{{ proxmox_password }}'
@@ -108,7 +109,7 @@
 
     - name: get container info
       community.proxmox.proxmox_vm_info:
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         vmid            : '{{ container_vmid }}'
@@ -127,7 +128,7 @@
     - name: start container
 #      ignore_errors     : true
       community.general.proxmox:
-        api_host        : '{{ proxmox_node }}'
+        api_host        : '{{ proxmox_api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox_password }}'
         vmid            : '{{ container_vmid }}'

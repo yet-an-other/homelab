@@ -19,7 +19,7 @@
 - name: check if vm exists
   delegate_to       : localhost
   community.proxmox.proxmox_vm_info:
-    api_host        : '{{ proxmox.node }}'
+    api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
     api_user        : 'root@pam'
     api_password    : '{{ proxmox.password }}'
     name            : '{{ vm.hostname }}'
@@ -32,7 +32,7 @@
 
 - name: Migrate VM on dedicated node
   community.proxmox.proxmox_kvm:
-    api_host    : '{{ proxmox.node }}'
+    api_host    : '{{ proxmox.api_host | default(ansible_host) }}'
     api_user    : 'root@pam'
     api_password: '{{ proxmox.password }}'
     name        : '{{ vm.hostname }}'

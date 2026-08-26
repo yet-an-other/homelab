@@ -38,7 +38,7 @@
 
     - name: Wait for VM to start running
       community.proxmox.proxmox_vm_info:
-        api_host: '{{ proxmox.node }}'
+        api_host: '{{ proxmox.api_host | default(ansible_host) }}'
         api_user: 'root@pam'
         api_password: '{{ proxmox.password }}'
         name        : '{{ vm.hostname }}'

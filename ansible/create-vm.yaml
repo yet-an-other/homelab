@@ -5,7 +5,7 @@
       delegate_to       : localhost
       community.proxmox.proxmox_kvm:
         node            : '{{ proxmox.node }}'
-        api_host        : '{{ proxmox.node }}'
+        api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox.password }}'
         newid           : '{{ vm.id }}'
@@ -25,7 +25,7 @@
     - name: wait for vm to be created
       delegate_to       : localhost
       community.proxmox.proxmox_vm_info:
-        api_host        : '{{ proxmox.node }}'
+        api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox.password }}'
         name            : '{{ vm.hostname }}'
@@ -38,7 +38,7 @@
     - name: start vm
       delegate_to       : localhost
       community.proxmox.proxmox_kvm:
-        api_host        : '{{ proxmox.node }}'
+        api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox.password }}'
         name            : '{{ vm.hostname }}'
@@ -49,7 +49,7 @@
     - name: get vm info
       delegate_to       : localhost
       community.proxmox.proxmox_vm_info:
-        api_host        : '{{ proxmox.node }}'
+        api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
         api_user        : 'root@pam'
         api_password    : '{{ proxmox.password }}'
         name            : '{{ vm.hostname }}'
@@ -169,7 +169,7 @@
         - name: restart vm to apply changes
           delegate_to       : localhost
           community.proxmox.proxmox_kvm:
-            api_host        : '{{ proxmox.node }}'
+            api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
             api_user        : 'root@pam'
             api_password    : '{{ proxmox.password }}'
             name            : '{{ vm.hostname }}'
@@ -187,7 +187,7 @@
 - name: wait for vm to restart
   delegate_to       : localhost
   community.proxmox.proxmox_vm_info:
-    api_host        : '{{ proxmox.node }}'
+    api_host        : '{{ proxmox.api_host | default(ansible_host) }}'
     api_user        : 'root@pam'
     api_password    : '{{ proxmox.password }}'
     name            : '{{ vm.hostname }}'
