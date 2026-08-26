@@ -29,12 +29,12 @@
                 {
                     "id": "{{ bastion.user_1 }}",
                     "flow": "xtls-rprx-vision",
-                    "email": "admin"
+                    "email": "ib-alwz"
                 },
                 {
                     "id": "{{ bastion.user_2 }}",
                     "flow": "xtls-rprx-vision",
-                    "email": "mom"
+                    "email": "ib-direct"
                 },
                 {
                     "id": "{{ bastion.user_3 }}",
@@ -77,10 +77,11 @@
                 "clients": [
                     {
                         "id": "{{ bastion.user_1 }}",
-                        "email": "admin"
+                        "email": "ib-alwz"
                     },
                     {
-                        "id": "{{ bastion.user_2 }}"
+                        "id": "{{ bastion.user_2 }}",
+                        "email": "ib-direct"
                     },
                     {
                         "id": "{{ bastion.user_3 }}"
@@ -127,6 +128,27 @@
             "protocol": "blackhole"
         },
         {
+            "tag": "xray-out",
+            "protocol": "vless",
+            "settings": {
+                "address": "{{ bastion['xray-out'].address }}",
+                "port": {{ bastion['xray-out'].port | int }},
+                "id": "{{ bastion['xray-out'].uuid }}",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "serverName": "{{ bastion['xray-out'].server_name }}",
+                    "fingerprint": "chrome",
+                    "password": "{{ bastion['xray-out'].public_key }}",
+                    "shortId": "{{ bastion['xray-out'].short_id }}"
+                }
+            }
+        },
+        {
             "tag": "wg-in",
             "protocol": "wireguard",
             "settings": {
@@ -142,29 +164,6 @@
                         "allowedIPs": [
                             "{{ bastion.wg.internal.ip }}/24",
                             "192.168.0.0/16"
-                        ]
-                    }
-                ],
-                "noKernelTun": true,
-                "domainStrategy": "ForceIP"
-            }
-        },
-        {
-            "tag": "wg-out",
-            "protocol": "wireguard",
-            "settings": {
-                "secretKey": "{{ bastion.wg.external.private_key }}",
-                "address": [
-                    "{{ bastion.wg.external.ip }}"
-                ],
-                "peers": [
-                    {
-                        "endpoint": "{{ bastion.wg.external.endpoint }}",
-                        "publicKey": "{{ bastion.wg.external.peer_public_key }}",
-                        "keepAlive": 25,
-                        "allowedIPs": [
-                            "0.0.0.0/0",
-                            "::/0"
                         ]
                     }
                 ],
@@ -190,7 +189,7 @@
           },
           {
               "type": "field",
-              "domain": ["domain:loft.bdgn.me", "domain:ar-speed.bdgn.me", "domain:alwz.bdgn.me"],
+              "domain": ["domain:{{ forpost.domain }}"],
               "outboundTag": "direct"
           },
           {
@@ -215,9 +214,19 @@
             "outboundTag": "blocked"
           },
           {
+              "type": "field",
+              "user": ["ib-direct"],
+              "outboundTag": "direct"
+          },
+          {
+              "type": "field",
+              "user": ["forpost"],
+              "outboundTag": "direct"
+          },
+          {
             "type": "field",
             "network": "tcp,udp",
-            "outboundTag": "wg-out"
+            "outboundTag": "xray-out"
           }
         ]
     },

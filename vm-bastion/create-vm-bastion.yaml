@@ -112,6 +112,24 @@
         content: "{{ lookup('template', 'xray.service') }}"
         force: no     
 
+    - name: stage xray config for validation
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      no_log: true
+      copy:
+        dest: /opt/xray/config.new.json
+        content: "{{ lookup('template', 'xray-config.json') }}"
+        owner: root
+        group: xrayuser
+        mode: '0640'
+        force: yes
+
+    - name: validate staged xray config
+      delegate_to: "{{ vm.hostname }}"
+      become: yes
+      command: /opt/xray/xray -test -c /opt/xray/config.new.json
+      changed_when: false
+
     - name: update xray config
       delegate_to: "{{ vm.hostname }}"
       become: yes
@@ -119,11 +137,12 @@
       register: xray_config
       copy:
         dest: /opt/xray/config.json
-        content: "{{ lookup('template', 'xray-config.json') }}"
+        remote_src: yes
+        src: /opt/xray/config.new.json
         owner: root
         group: xrayuser
         mode: '0640'
-        force: yes 
+        force: yes
 
     - name: restart xray on config change
       delegate_to: "{{ vm.hostname }}"
