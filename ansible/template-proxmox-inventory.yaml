@@ -72,6 +72,8 @@ proxmox:
 #                              # serverNames, the nginx SNI map, the fallback
 #                              # server_name and the cert SANs (SPEC §6/§7)
 #       private_key: ""         # xray x25519 private key
+#       public_key: ""          # xray x25519 PUBLIC key (xray x25519 -i <private_key>);
+#                              # the panel advertises it as the REALITY pbk (SPEC §7)
 #       short_ids: ["01", "02"]
 #       users:
 #         - { name: admin, uuid: "", privileged: true }
@@ -91,3 +93,5 @@ proxmox:
 #         server_name: ""
 #         public_key: ""
 #         short_id: "01"
+#       xform_password: ""      # xform panel login (SPEC §7) — rendered into the
+#                              # hardened unit's environment

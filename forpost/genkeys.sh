@@ -68,6 +68,7 @@ cat <<EOF
       domain: ${DOMAIN}              # node public name; manual A record -> ansible_host
       server_name: ${DOMAIN}         # Reality SNI; normally == domain
       private_key: ${PRIVATE_KEY}
+      public_key: ${PUBLIC_KEY}       # x25519 PUBLIC key — advertised by the panel (SPEC §7)
       short_ids: ["01", "02"]
       users:
         - { name: admin, uuid: ${UUID_ADMIN}, privileged: true }

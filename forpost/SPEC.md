@@ -66,9 +66,11 @@ forpost/
 │   ├── default.conf.j2
 │   ├── fallback.conf.j2
 │   ├── xform.conf.j2
-│   └── xform.service.j2
+│   ├── xform.service.j2
+│   └── xform-connections.json.j2
 ├── tests/
 │   ├── proxy-protocol.sh    # PROXY protocol pair lockstep (run by the play after render)
+│   ├── xform-connections.sh # advertisement ⟺ inbound lockstep (run by the play after render)
 │   └── xform-updater.sh     # isolated release/update lifecycle seam
 └── user-data.yaml           # slim reachability-only cloud-init, pasted at VM creation
 ```
@@ -84,7 +86,8 @@ Staging path on the node: `/usr/local/sbin/forpost/` (bootstrap + units). Templa
 play before the corresponding unit runs: the xray config directly to its final destination
 (`/usr/local/etc/xray/config.json`); the nginx confs into staging under `/usr/local/sbin/forpost/nginx/` —
 `41-nginx.sh` places them (units place, verify, restart, §5). The xform systemd unit is staged under
-`/usr/local/sbin/forpost/xform/` and placed by `43-xform.sh`.
+`/usr/local/sbin/forpost/xform/` and placed by `43-xform.sh`. The panel's advertised connection
+settings render directly to `/usr/local/etc/xform/connections.json` (§7).
 
 ## 3. Secrets (#6)
 
@@ -108,6 +111,8 @@ forpost:
   backup_domain: htz.bdgn.me       # OPTIONAL: second client-facing name — same inbound,
                                    # users, fallbacks; own manual A record required (§10)
   private_key: <x25519-private>    # xray x25519
+  public_key: <x25519-public>      # derived: xray x25519 -i <private_key>; advertised to
+                                   # panel users as the REALITY pbk (§7)
   short_ids: ["01", "02"]
   users:
     - { name: admin, uuid: <uuid-v4>, privileged: true }
@@ -126,6 +131,7 @@ forpost:
     server_name: <bastion-reality-sni>
     public_key: <bastion-x25519-pub>
     short_id: "01"
+  xform_password: <panel-login>    # xform login — rendered into the hardened unit's environment
 ```
 
 Key material is human-generated once and pasted in. Helper commands (documented in the playbook
@@ -329,6 +335,21 @@ the same rejected tag is skipped until a newer release
 appears or `/var/lib/forpost/xform/rejected-version` is removed manually. Inspect service and update output with
 `journalctl -u xform` and `/var/log/forpost/43-xform.log`.
 
+**Advertised connection settings.** The panel never infers a public client view from the xray
+listener (NAT and the nginx SNI map make that unsafe — upstream SPEC §3.2), so the play renders
+`templates/xform-connections.json.j2` → `/usr/local/etc/xform/connections.json` (root:root `0644` —
+public §8 link material only: host, port, SNI, REALITY public key, first short id) and points the
+service at it via `XFORM_CONNECTIONS_CONFIG`. One `direct` advertisement selects the `vless-reality`
+inbound and carries exactly the §8 link parameters for `{{ forpost.domain }}:443`;
+`forpost.public_key` is operator-derived once (`xray x25519 -i <private_key>`, printed by
+`genkeys.sh`) because the panel must not derive server material. The panel watches the file's
+directory, so content-only updates apply live without a restart; the first deployment restarts via
+the unit change. Upstream rejects duplicate inbound tags, so with `backup_domain` set the panel still
+advertises the primary name — backup-name links remain the manual §8 contract.
+`tests/xform-connections.sh` (run by the play after rendering, before any unit places a config)
+asserts the advertisement satisfies the inbound — tag, transport/security types, serverName and
+short-id membership — and that the env var aims at the rendered path.
+
 If release discovery or download fails before first installation, deployment fails. If a verified xform
 is already installed, the unit warns, retains it, and verifies local health. The upstream daily update
 timer is never installed. A brief `9443` outage during update is accepted; port `443` and the VPN data
@@ -395,7 +416,8 @@ through the tunnel (socks5h-style) use bastion's scoped internal DNS module inst
 3. push `bootstrap.sh` + `units/` → `/usr/local/sbin/forpost/` (mode 0755)
 4. render `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`
 5. render `templates/{nginx.conf,default.conf,fallback.conf}.j2` → staging under `/usr/local/sbin/forpost/nginx/`
-6. render the xform nginx vhost and hardened systemd service into staging
+6. render the xform nginx vhost, hardened systemd service, and advertised connection settings
+   (`/usr/local/etc/xform/connections.json`) into staging/final place
 7. nginx first: `bootstrap.sh --only 41` brings the fallback vhost up BEFORE any xray restart — xray
    mirrors dest's handshake even for authenticated clients, so xray-first ordering drops clients (#10)
 8. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
@@ -440,6 +462,9 @@ switchover, and healed as soon as 40 completes.
 - [ ] `/var/log/nginx/fallback.access.log` records real client addresses (not `127.0.0.1`)
 - [ ] `curl -fsS https://<domain>:9443/` reaches xform with a valid certificate
 - [ ] xform listens only on `127.0.0.1:9090`; Xray StatsService and HandlerService listen only on `127.0.0.1:8080`
+- [ ] panel users carry a connection profile: the advertisement satisfies the inbound
+      (`tests/xform-connections.sh` green) and the profile link equals the §8 share link for the
+      primary name
 - [ ] `xray api statsquery --server=127.0.0.1:8080` succeeds
 - [ ] non-privileged client: exit IP = alwyzon's; public `*.bdgn.me` works; `192.168.x.x` fails fast
 - [ ] privileged client: exit IP = alwyzon's; `*.bdgn.me` and internal IPs reach internal VMs via bastion

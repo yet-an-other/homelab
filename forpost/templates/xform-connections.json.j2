@@ -1,0 +1,44 @@
+{#-
+  xform-connections.json.j2 — advertised connection settings for the xform
+  panel (SPEC §7, xform lifecycle).
+
+  The panel never infers a public client view from the xray listener
+  (upstream SPEC §3.2: NAT, TLS termination and reverse proxies make that
+  inference unsafe — forpost's inbound sits behind the nginx SNI map), so
+  the public view is advertised explicitly. One `direct` advertisement
+  selects the `vless-reality` inbound and carries exactly the SPEC §8 link
+  parameters: host = forpost.domain (the public nginx entry), port 443,
+  tcp transport, reality security with SNI = forpost.server_name, the
+  x25519 PUBLIC key (operator-derived once via `xray x25519 -i
+  <private_key>` — the panel validates syntax but must not derive server
+  material), and the FIRST short id.
+
+  Upstream rejects duplicate inbound tags, so with backup_domain set the
+  panel still advertises the primary name only — backup-name links remain
+  the manual §8 contract.
+
+  Rendered by create-forpost.yaml to /usr/local/etc/xform/connections.json
+  (root:root 0644 — public link material only, no secrets). The panel
+  watches the file's directory, so content-only updates apply live without
+  a restart; XFORM_CONNECTIONS_CONFIG in xform.service.j2 must keep
+  pointing at that path. tests/xform-connections.sh (run by the play after
+  rendering, before any unit places a config) asserts the advertisement
+  satisfies the inbound and that the env-var ⟺ path pair holds.
+-#}
+{%- set advertisement = {
+  "inbound_tag": "vless-reality",
+  "name": forpost.domain | mandatory("forpost is missing domain"),
+  "topology": "direct",
+  "host": forpost.domain | mandatory("forpost is missing domain"),
+  "port": 443,
+  "transport": {"type": "tcp"},
+  "security": {
+    "type": "reality",
+    "fingerprint": "chrome",
+    "server_name": forpost.server_name | mandatory("forpost is missing server_name"),
+    "public_key": forpost.public_key | mandatory("forpost is missing public_key — derive it with: xray x25519 -i <private_key>"),
+    "short_id": forpost.short_ids | first
+  }
+} -%}
+{%- set connections = {"version": 1, "advertisements": [advertisement]} -%}
+{{ connections | to_nice_json }}
