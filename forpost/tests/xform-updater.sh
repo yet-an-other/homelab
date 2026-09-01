@@ -65,6 +65,7 @@ setup_sandbox() {
   mkdir -p "${sandbox}/release" "${sandbox}/bin" \
     "${sandbox}/app-state" "${sandbox}/deployment-state" \
     "${sandbox}/acl-state" "${sandbox}/etc/xray" \
+    "${sandbox}/etc/tmpfiles.d" \
     "${sandbox}/staging" "${sandbox}/system"
 
   cat > "${sandbox}/bin/curl" <<'EOF'
@@ -164,9 +165,16 @@ case "$2:$3" in
 esac
 EOF
 
+  cat > "${sandbox}/bin/systemd-tmpfiles" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${XFORM_TEST_TMPFILES_LOG}"
+EOF
+
   chmod +x "${sandbox}/bin/dpkg" "${sandbox}/bin/getent" \
     "${sandbox}/bin/id" "${sandbox}/bin/install" \
-    "${sandbox}/bin/getfacl" "${sandbox}/bin/setfacl"
+    "${sandbox}/bin/getfacl" "${sandbox}/bin/setfacl" \
+    "${sandbox}/bin/systemd-tmpfiles"
 }
 
 write_release() {
@@ -204,6 +212,8 @@ run_unit() {
   XFORM_SERVICE_STAGING="${sandbox}/staging/xform.service" \
   XFORM_SERVICE_UNIT="${sandbox}/system/xform.service" \
   XFORM_XRAY_CONFIG_PATH="${sandbox}/etc/xray/config.json" \
+  XFORM_TMPFILES_CONF="${sandbox}/etc/tmpfiles.d/xform-journal-acl.conf" \
+  XFORM_TMPFILES="${sandbox}/bin/systemd-tmpfiles" \
   XFORM_RELEASE_API="${release_api_override:-file://${sandbox}/release/release.json}" \
   XFORM_ARCH="${arch_override}" \
   XFORM_CURL="${sandbox}/bin/curl" \
@@ -219,6 +229,7 @@ run_unit() {
   XFORM_TEST_CONFIG_DIR="${sandbox}/etc/xray" \
   XFORM_TEST_ACL_STATE="${sandbox}/acl-state" \
   XFORM_TEST_SETFACL_LOG="${sandbox}/setfacl.log" \
+  XFORM_TEST_TMPFILES_LOG="${sandbox}/tmpfiles.log" \
   XFORM_HEALTH_URL="http://xform.test/" \
   XFORM_HEALTH_ATTEMPTS=1 \
   XFORM_HEALTH_DELAY=0 \

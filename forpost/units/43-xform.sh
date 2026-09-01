@@ -19,6 +19,7 @@ release_api="${XFORM_RELEASE_API:-https://api.github.com/repos/yet-an-other/xfor
 service="${XFORM_SERVICE:-xform.service}"
 curl_cmd="${XFORM_CURL:-curl}"
 systemctl_cmd="${XFORM_SYSTEMCTL:-systemctl}"
+tmpfiles_cmd="${XFORM_TMPFILES:-systemd-tmpfiles}"
 health_attempts="${XFORM_HEALTH_ATTEMPTS:-20}"
 health_delay="${XFORM_HEALTH_DELAY:-1}"
 host_setup="${XFORM_HOST_SETUP:-1}"
@@ -149,6 +150,18 @@ restore_database() {
   fi
 }
 
+# `getfacl | grep -q` closes the pipe on the first match, so getfacl dies of
+# SIGPIPE and `pipefail` reports the whole check as failed — an entry that is
+# already present then reads as missing and gets re-applied on every run. Read
+# the ACL once, then match it without a pipe.
+acl_present() {
+  local target="$1"
+  local entry="$2"
+  local acl
+  acl="$(getfacl -cp "${target}")" || return 1
+  grep -qxF "${entry}" <<<"${acl}"
+}
+
 setup_host() {
   local missing_packages package xform_entry xform_home xform_shell
   missing_packages=""
@@ -184,7 +197,11 @@ setup_host() {
   # only the `xform` namespace — never via systemd-journal/adm membership.
   # Applying here covers the already-existing namespace dirs; xform.service's
   # ExecStartPre re-applies on every start for the volatile-boot case.
+  # The literal destination stays on its own line: tests/journal-namespace.sh
+  # pins it to the unit's ExecStartPre. XFORM_TMPFILES_CONF only redirects it
+  # into a sandbox for tests/xform-updater.sh.
   local tmpfiles_conf="/etc/tmpfiles.d/xform-journal-acl.conf"
+  tmpfiles_conf="${XFORM_TMPFILES_CONF:-${tmpfiles_conf}}"
   local tmpfiles_src
   tmpfiles_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/xform-journal-acl.conf"
   if [ -f "${tmpfiles_conf}" ] && cmp -s "${tmpfiles_src}" "${tmpfiles_conf}"; then
@@ -193,7 +210,7 @@ setup_host() {
     install -m 0644 -o root -g root "${tmpfiles_src}" "${tmpfiles_conf}"
     log "placed ${tmpfiles_conf}"
   fi
-  systemd-tmpfiles --create "${tmpfiles_conf}"
+  "${tmpfiles_cmd}" --create "${tmpfiles_conf}"
 
   if [ ! -f "${service_staging}" ]; then
     echo "43-xform: missing staged service: ${service_staging}" >&2
@@ -217,17 +234,17 @@ setup_host() {
     echo "43-xform: xray config is missing: ${xray_config}" >&2
     return 1
   fi
-  if ! getfacl -cp "${xray_config}" | grep -qx 'user:xform:r--'; then
+  if ! acl_present "${xray_config}" 'user:xform:r--'; then
     setfacl -m u:xform:r-- "${xray_config}"
     log "granted xform read access to ${xray_config}"
   fi
-  if ! getfacl -cp "${xray_config_dir}" | grep -qx 'user:xform:rwx'; then
+  if ! acl_present "${xray_config_dir}" 'user:xform:rwx'; then
     setfacl -m u:xform:rwx "${xray_config_dir}"
     log "granted xform roster write access to ${xray_config_dir}"
   fi
   # Roster writes replace config.json with a new file. Preserve read access for
   # the unprivileged xray service even though the config is deliberately 0640.
-  if ! getfacl -cp "${xray_config_dir}" | grep -qx "default:user:${xray_user}:r--"; then
+  if ! acl_present "${xray_config_dir}" "default:user:${xray_user}:r--"; then
     setfacl -m "d:u:${xray_user}:r--" "${xray_config_dir}"
     log "granted ${xray_user} inherited read access in ${xray_config_dir}"
   fi
