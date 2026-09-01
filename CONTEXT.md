@@ -22,7 +22,7 @@ _Avoid_: jump host
 A VPN user whose forpost routing sends internal destinations (bdgn.me, 192.168.0.0/16) to the bastion. Identified by the authenticated email tag in forpost's xray config; non-privileged users get default routing to alwyzon (with 192.168.0.0/16 blocked).
 
 **xform**:
-The externally maintained, read-only observability panel associated with forpost's xray server. This repository owns deploying and connecting it; panel behavior, authentication, and data remain upstream concerns.
+The externally maintained monitoring panel associated with forpost's xray server. It observes xray and manages its user roster; this repository owns deploying and connecting it, while panel behavior and roster semantics remain upstream concerns.
 _Avoid_: xray control panel
 
 ### Unrelated, easy to confuse

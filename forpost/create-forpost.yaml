@@ -4,7 +4,7 @@
 # + xray (issue #10) + the client-facing path: cert, nginx SNI entry, ufw
 # (issue #13) + all traffic chained via alwyzon (issue #11) + full routing:
 # bastion outbound and the privileged split (issue #12) + the xform
-# observability deployment (issue #14).
+# monitoring and roster deployment (issue #14).
 #
 # Ordering note (#13): when the deploy will change anything, nginx is
 # brought up FIRST (bootstrap --only 41) so the fallback vhost is live
@@ -137,7 +137,9 @@
         state: directory
         owner: root
         group: root
-        mode: "0755"
+        # The named xform ACL uses an rwx mask, which stat reports as group rwx.
+        # The owning group remains root, so this grants no additional principal.
+        mode: "0775"
 
     - name: render the xray config before units run (SPEC §9)
       ansible.builtin.template:
@@ -205,6 +207,8 @@
       changed_when: >-
         '43-xform: installed ' in forpost_xform_update.stdout
         or '43-xform: placed ' in forpost_xform_update.stdout
+        or '43-xform: granted ' in forpost_xform_update.stdout
+        or '43-xform: activated ' in forpost_xform_update.stdout
 
     - name: collect per-unit logs
       ansible.builtin.find:
@@ -294,6 +298,7 @@
         path: "{{ item }}"
       loop:
         - /usr/local/etc/xray/config.json
+        - /usr/local/etc/xray
         - /var/lib/xform
         - /var/lib/forpost/xform
       become_user: xform
@@ -303,10 +308,11 @@
       ansible.builtin.assert:
         that:
           - forpost_xform_paths.results[0].stat.readable
-          - not forpost_xform_paths.results[0].stat.writeable
           - forpost_xform_paths.results[1].stat.writeable
-          - not forpost_xform_paths.results[2].stat.writeable
-        fail_msg: xform must have read-only config access and isolated writable application state
+          - forpost_xform_paths.results[1].stat.executable
+          - forpost_xform_paths.results[2].stat.writeable
+          - not forpost_xform_paths.results[3].stat.writeable
+        fail_msg: xform must have roster write access and isolated application state
         quiet: true
 
     - name: assert xform systemd hardening
@@ -315,7 +321,8 @@
           - forpost_service_state.results[2].status.User == "xform"
           - forpost_service_state.results[2].status.NoNewPrivileges == "yes"
           - forpost_service_state.results[2].status.ProtectSystem == "strict"
-        fail_msg: xform must run unprivileged with the expected systemd hardening
+          - "'/usr/local/etc/xray' in forpost_service_state.results[2].status.ReadWritePaths"
+        fail_msg: xform must run unprivileged with the expected systemd hardening and xray write path
         quiet: true
 
     - name: verify the firewall is locked down (SPEC §5)

@@ -10,6 +10,7 @@ release_api_override=""
 arch_override="amd64"
 fail_restart_for_broken=0
 lock_deployment_state_on_broken=0
+host_setup=0
 
 cleanup() {
   if [ -n "${sandbox}" ] && [ -d "${sandbox}" ]; then
@@ -59,9 +60,12 @@ setup_sandbox() {
   arch_override="amd64"
   fail_restart_for_broken=0
   lock_deployment_state_on_broken=0
+  host_setup=0
   sandbox="$(mktemp -d)"
   mkdir -p "${sandbox}/release" "${sandbox}/bin" \
-    "${sandbox}/app-state" "${sandbox}/deployment-state"
+    "${sandbox}/app-state" "${sandbox}/deployment-state" \
+    "${sandbox}/acl-state" "${sandbox}/etc/xray" \
+    "${sandbox}/staging" "${sandbox}/system"
 
   cat > "${sandbox}/bin/curl" <<'EOF'
 #!/bin/bash
@@ -92,6 +96,77 @@ if [ "$1" = restart ] && grep -q 'broken-release' "${XFORM_TEST_INSTALL_PATH}" 2
 fi
 EOF
   chmod +x "${sandbox}/bin/systemctl"
+
+  cat > "${sandbox}/bin/dpkg" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[ "$1" = -s ] && exit 0
+exec /usr/bin/dpkg "$@"
+EOF
+
+  cat > "${sandbox}/bin/getent" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+case "$1:$2" in
+  group:xform) printf '%s\n' 'xform:x:999:' ;;
+  passwd:xform) printf 'xform:x:999:999::%s:/usr/sbin/nologin\n' "${XFORM_TEST_APP_STATE_DIR}" ;;
+  *) exit 2 ;;
+esac
+EOF
+
+  cat > "${sandbox}/bin/id" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+case " $* " in
+  *" -u xform "*) printf '%s\n' '999' ;;
+  *" -gn xform "*) printf '%s\n' 'xform' ;;
+  *) exec /usr/bin/id "$@" ;;
+esac
+EOF
+
+  cat > "${sandbox}/bin/install" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o | -g) shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+exec /usr/bin/install "${args[@]}"
+EOF
+
+  cat > "${sandbox}/bin/getfacl" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+path="${*: -1}"
+case "${path}" in
+  "${XFORM_TEST_CONFIG_PATH}")
+    [ -f "${XFORM_TEST_ACL_STATE}/config-read" ] && printf '%s\n' 'user:xform:r--'
+    ;;
+  "${XFORM_TEST_CONFIG_DIR}")
+    [ -f "${XFORM_TEST_ACL_STATE}/config-dir-write" ] && printf '%s\n' 'user:xform:rwx'
+    [ -f "${XFORM_TEST_ACL_STATE}/xray-default-read" ] && printf '%s\n' 'default:user:nobody:r--'
+    ;;
+esac
+EOF
+
+  cat > "${sandbox}/bin/setfacl" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${XFORM_TEST_SETFACL_LOG}"
+case "$2:$3" in
+  "u:xform:r--:${XFORM_TEST_CONFIG_PATH}") touch "${XFORM_TEST_ACL_STATE}/config-read" ;;
+  "u:xform:rwx:${XFORM_TEST_CONFIG_DIR}") touch "${XFORM_TEST_ACL_STATE}/config-dir-write" ;;
+  "d:u:nobody:r--:${XFORM_TEST_CONFIG_DIR}") touch "${XFORM_TEST_ACL_STATE}/xray-default-read" ;;
+  *) exit 64 ;;
+esac
+EOF
+
+  chmod +x "${sandbox}/bin/dpkg" "${sandbox}/bin/getent" \
+    "${sandbox}/bin/id" "${sandbox}/bin/install" \
+    "${sandbox}/bin/getfacl" "${sandbox}/bin/setfacl"
 }
 
 write_release() {
@@ -119,12 +194,16 @@ EOF
 }
 
 run_unit() {
-  XFORM_HOST_SETUP=0 \
+  PATH="${sandbox}/bin:${PATH}" \
+  XFORM_HOST_SETUP="${host_setup}" \
   XFORM_LOCK_ENABLED=0 \
   XFORM_INSTALL_PATH="${sandbox}/installed/xform" \
   XFORM_APP_STATE_DIR="${sandbox}/app-state" \
   XFORM_DEPLOYMENT_STATE_DIR="${sandbox}/deployment-state" \
   XFORM_DB_PATH="${sandbox}/app-state/xform.db" \
+  XFORM_SERVICE_STAGING="${sandbox}/staging/xform.service" \
+  XFORM_SERVICE_UNIT="${sandbox}/system/xform.service" \
+  XFORM_XRAY_CONFIG_PATH="${sandbox}/etc/xray/config.json" \
   XFORM_RELEASE_API="${release_api_override:-file://${sandbox}/release/release.json}" \
   XFORM_ARCH="${arch_override}" \
   XFORM_CURL="${sandbox}/bin/curl" \
@@ -135,6 +214,11 @@ run_unit() {
   XFORM_TEST_FAIL_RESTART_FOR_BROKEN="${fail_restart_for_broken}" \
   XFORM_TEST_LOCK_DEPLOYMENT_STATE_ON_BROKEN="${lock_deployment_state_on_broken}" \
   XFORM_TEST_SYSTEMCTL_LOG="${sandbox}/systemctl.log" \
+  XFORM_TEST_APP_STATE_DIR="${sandbox}/app-state" \
+  XFORM_TEST_CONFIG_PATH="${sandbox}/etc/xray/config.json" \
+  XFORM_TEST_CONFIG_DIR="${sandbox}/etc/xray" \
+  XFORM_TEST_ACL_STATE="${sandbox}/acl-state" \
+  XFORM_TEST_SETFACL_LOG="${sandbox}/setfacl.log" \
   XFORM_HEALTH_URL="http://xform.test/" \
   XFORM_HEALTH_ATTEMPTS=1 \
   XFORM_HEALTH_DELAY=0 \
@@ -154,6 +238,56 @@ test_fresh_install_selects_and_verifies_latest_release() {
   assert_missing "${sandbox}/app-state/rejected-version"
   assert_contains "restart xform.service" "${sandbox}/systemctl.log"
   echo "ok - fresh install selects and verifies latest release"
+}
+
+test_host_setup_grants_idempotent_xray_roster_access() {
+  local acl_repair_output
+  setup_sandbox
+  host_setup=1
+  write_release "v1.2.3" "amd64" "healthy-release-v1.2.3"
+  cp "${repo_root}/templates/xform.service.j2" "${sandbox}/staging/xform.service"
+  printf '%s\n' '{}' > "${sandbox}/etc/xray/config.json"
+
+  run_unit
+
+  assert_contains "-m u:xform:r-- ${sandbox}/etc/xray/config.json" "${sandbox}/setfacl.log"
+  assert_contains "-m u:xform:rwx ${sandbox}/etc/xray" "${sandbox}/setfacl.log"
+  assert_contains "-m d:u:nobody:r-- ${sandbox}/etc/xray" "${sandbox}/setfacl.log"
+  assert_contains "ReadWritePaths=/usr/local/etc/xray" "${sandbox}/system/xform.service"
+  assert_contains '"services": ["StatsService", "HandlerService"]' \
+    "${repo_root}/templates/xray-config.json.j2"
+
+  : > "${sandbox}/setfacl.log"
+  run_unit
+  assert_empty "${sandbox}/setfacl.log"
+
+  rm -f "${sandbox}/acl-state/config-dir-write"
+  acl_repair_output="$(run_unit)"
+  assert_contains "-m u:xform:rwx ${sandbox}/etc/xray" "${sandbox}/setfacl.log"
+  grep -Fq '43-xform: granted xform roster write access' <<< "${acl_repair_output}" ||
+    fail "ACL repair was not reported as a deployment change"
+  assert_contains "'43-xform: granted '" "${repo_root}/create-forpost.yaml"
+  echo "ok - host setup grants and reports idempotent xray roster access"
+}
+
+test_host_setup_restarts_a_matching_but_unrecorded_service_unit() {
+  local activation_output
+  setup_sandbox
+  host_setup=1
+  write_release "v1.2.3" "amd64" "healthy-release-v1.2.3"
+  cp "${repo_root}/templates/xform.service.j2" "${sandbox}/staging/xform.service"
+  printf '%s\n' '{}' > "${sandbox}/etc/xray/config.json"
+  run_unit >/dev/null
+
+  rm -f "${sandbox}/deployment-state/active-service-unit-checksum"
+  : > "${sandbox}/systemctl.log"
+  activation_output="$(run_unit)"
+
+  assert_contains "restart xform.service" "${sandbox}/systemctl.log"
+  grep -Fq '43-xform: activated service unit' <<< "${activation_output}" ||
+    fail "matching unit on disk did not force activation without its checksum marker"
+  assert_contains "'43-xform: activated '" "${repo_root}/create-forpost.yaml"
+  echo "ok - matching unrecorded service unit is activated"
 }
 
 test_matching_release_is_a_noop() {
@@ -417,6 +551,8 @@ run_test() {
 }
 
 run_test test_fresh_install_selects_and_verifies_latest_release
+run_test test_host_setup_grants_idempotent_xray_roster_access
+run_test test_host_setup_restarts_a_matching_but_unrecorded_service_unit
 run_test test_matching_release_is_a_noop
 run_test test_new_tag_restarts_even_when_binary_is_identical
 run_test test_same_tag_ignores_mutated_upstream_asset

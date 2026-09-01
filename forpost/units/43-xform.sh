@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# 43-xform.sh — install and supervise the xform observability panel.
+# 43-xform.sh — install and supervise the xform monitoring and roster panel.
 #
 # Resolves the latest stable upstream release during every invocation, verifies
 # its checksum, installs it atomically, and accepts it only after a loopback
@@ -27,11 +27,15 @@ forpost_home="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 service_staging="${XFORM_SERVICE_STAGING:-${forpost_home}/xform/xform.service}"
 service_unit="${XFORM_SERVICE_UNIT:-/etc/systemd/system/xform.service}"
 xray_config="${XFORM_XRAY_CONFIG_PATH:-/usr/local/etc/xray/config.json}"
+xray_config_dir="$(dirname "${xray_config}")"
+xray_user="${XFORM_XRAY_USER:-nobody}"
 service_changed=0
+service_checksum=""
 temp_dir=""
 
 installed_release_file="${deployment_state_dir}/installed-release"
 rejected_version_file="${deployment_state_dir}/rejected-version"
+active_service_checksum_file="${deployment_state_dir}/active-service-unit-checksum"
 
 log() {
   echo "43-xform: $*"
@@ -111,6 +115,20 @@ write_value() {
   fi
 }
 
+record_active_service() {
+  if [ "${host_setup}" != 1 ]; then
+    return 0
+  fi
+  if [ -z "${service_checksum}" ]; then
+    echo "43-xform: service unit checksum was not collected" >&2
+    return 1
+  fi
+  write_value "${service_checksum}" "${active_service_checksum_file}" || return 1
+  if [ "${service_changed}" -eq 1 ]; then
+    log "activated service unit ${service_unit}"
+  fi
+}
+
 atomic_copy() {
   local source="$1"
   local destination="$2"
@@ -174,6 +192,11 @@ setup_host() {
     service_changed=1
     log "placed ${service_unit}"
   fi
+  service_checksum="$(sha256sum "${service_unit}" | awk '{print $1}')" || return 1
+  if [ ! -s "${active_service_checksum_file}" ] ||
+    [ "$(cat "${active_service_checksum_file}")" != "${service_checksum}" ]; then
+    service_changed=1
+  fi
 
   if [ ! -f "${xray_config}" ]; then
     echo "43-xform: xray config is missing: ${xray_config}" >&2
@@ -181,6 +204,17 @@ setup_host() {
   fi
   if ! getfacl -cp "${xray_config}" | grep -qx 'user:xform:r--'; then
     setfacl -m u:xform:r-- "${xray_config}"
+    log "granted xform read access to ${xray_config}"
+  fi
+  if ! getfacl -cp "${xray_config_dir}" | grep -qx 'user:xform:rwx'; then
+    setfacl -m u:xform:rwx "${xray_config_dir}"
+    log "granted xform roster write access to ${xray_config_dir}"
+  fi
+  # Roster writes replace config.json with a new file. Preserve read access for
+  # the unprivileged xray service even though the config is deliberately 0640.
+  if ! getfacl -cp "${xray_config_dir}" | grep -qx "default:user:${xray_user}:r--"; then
+    setfacl -m "d:u:${xray_user}:r--" "${xray_config_dir}"
+    log "granted ${xray_user} inherited read access in ${xray_config_dir}"
   fi
   "${systemctl_cmd}" enable "${service}"
 }
@@ -388,6 +422,10 @@ if [ "${status}" -eq 2 ] && [ -x "${install_path}" ] &&
     echo "43-xform: retained ${service} is not healthy" >&2
     exit 1
   fi
+  record_active_service || exit 1
   exit 0
+fi
+if [ "${status}" -eq 0 ]; then
+  record_active_service || exit 1
 fi
 exit "${status}"

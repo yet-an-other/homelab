@@ -28,7 +28,7 @@ client ──VLESS+Reality──> forpost ──VLESS+Reality──> alwyzon ─
 
 operator ──HTTPS :9443──> nginx ──HTTP loopback──> xform
                                            │
-                                           └──gRPC loopback──> xray StatsService
+                                           └──gRPC loopback──> xray StatsService + HandlerService
 ```
 
 Privilege is enforced by the **authenticated email tag** in xray (`user` field in routing rules).
@@ -179,11 +179,12 @@ authenticated clients (post-mortem in #10).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
 
-**Read-only statistics API.** xform's prerequisite contract enables `stats`, level-zero user uplink,
-downlink, and online-user policy, plus inbound/outbound system traffic policy. Xray exposes only
-`StatsService` at `127.0.0.1:8080`; HandlerService, RoutingService, LoggerService, and every other
-mutation-capable API remain disabled. The loopback boundary is mandatory because Xray's gRPC API has
-no authentication or TLS. Existing user email tags are the per-user statistics identities.
+**Panel gRPC API.** xform's prerequisite contract enables `stats`, level-zero user uplink,
+downlink, and online-user policy, plus inbound/outbound system traffic policy. Xray exposes
+`StatsService` and `HandlerService` at `127.0.0.1:8080`. HandlerService lets xform push roster changes
+to the running xray process without a restart; RoutingService, LoggerService, and all other services
+remain disabled. The loopback boundary is mandatory because Xray's gRPC API has no authentication or
+TLS. Existing user email tags are the per-user statistics identities.
 
 **Inbound** (single live inbound; the nginx SNI map anticipates more — see fog):
 
@@ -299,11 +300,13 @@ Note: this is cert issuance only — the DNS *A record* stays manual (§10).
 ### xform lifecycle (#14)
 
 xform runs as a dedicated unprivileged user under a hardened systemd service. Its HTTP listener is
-`127.0.0.1:9090`; environment variables point it at the loopback StatsService, Xray config, persistent
-state, and `xray.service`. A file ACL grants read-only Xray-config access without making xform root or
-changing Xray's existing `nogroup` access. xform writes only to its systemd-managed application state
-directory and logs to journald. Installed-version metadata, the quarantine marker, and the pre-upgrade
-database backup stay in root-owned forpost deployment state, outside xform's writable directory.
+`127.0.0.1:9090`; environment variables point it at the loopback xray API, Xray config, persistent
+state, and `xray.service`. A file ACL grants config read access, while a directory ACL and the unit's
+`ReadWritePaths=/usr/local/etc/xray` exception allow atomic roster rewrites without granting root. A
+default ACL preserves read access for xray's `nobody` user when xform replaces the mode-0640 config.
+xform can write only its systemd-managed application state and the Xray config directory. Installed
+release metadata, the quarantine marker, and the pre-upgrade database backup stay in root-owned
+forpost deployment state.
 
 Every normal Ansible deployment asks GitHub for the latest stable, non-draft, non-prerelease release,
 selects `xform-linux-amd64` or `xform-linux-arm64`, and verifies it against `checksums.txt`. Matching
@@ -388,8 +391,8 @@ through the tunnel (socks5h-style) use bastion's scoped internal DNS module inst
 8. command: `/usr/local/sbin/forpost/bootstrap.sh` (full run; `--from 40` when iterating on the VPN layer)
 9. run `bootstrap.sh --only 43` after orchestration on every apply to check the latest stable xform
    release without touching Xray or nginx (a preceding full bootstrap makes this an immediate no-op)
-10. verify: public ports 443 and 9443, active/enabled xray+nginx+xform, loopback-only xform+StatsService,
-    hardened xform access, and exact UFW lockdown (42318 + 443 + 9443/tcp)
+10. verify: public ports 443 and 9443, active/enabled xray+nginx+xform, loopback-only xform and xray API,
+    bounded xform roster access, and exact UFW lockdown (42318 + 443 + 9443/tcp)
 
 Re-running the play on a live node must be a no-op when configuration and the latest xform release are
 unchanged (idempotency, #5).
@@ -425,7 +428,7 @@ switchover, and healed as soon as 40 completes.
       still serves the fallback content (both PP hops live)
 - [ ] `/var/log/nginx/fallback.access.log` records real client addresses (not `127.0.0.1`)
 - [ ] `curl -fsS https://<domain>:9443/` reaches xform with a valid certificate
-- [ ] xform listens only on `127.0.0.1:9090`; Xray StatsService listens only on `127.0.0.1:8080`
+- [ ] xform listens only on `127.0.0.1:9090`; Xray StatsService and HandlerService listen only on `127.0.0.1:8080`
 - [ ] `xray api statsquery --server=127.0.0.1:8080` succeeds
 - [ ] non-privileged client: exit IP = alwyzon's; public `*.bdgn.me` works; `192.168.x.x` fails fast
 - [ ] privileged client: exit IP = alwyzon's; `*.bdgn.me` and internal IPs reach internal VMs via bastion

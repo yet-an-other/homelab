@@ -1,5 +1,5 @@
 [Unit]
-Description=xform — read-only observability panel for xray
+Description=xform monitoring and roster panel for xray
 After=network-online.target xray.service
 Wants=network-online.target
 
@@ -14,6 +14,11 @@ UMask=0027
 
 StateDirectory=xform
 StateDirectoryMode=0750
+
+# Roster applies use an atomic temp-file-and-rename write in this directory.
+# The xform user still needs the directory ACL installed by 43-xform.sh.
+ReadWritePaths=/usr/local/etc/xray
+
 Environment=XFORM_LISTEN=127.0.0.1:9090
 Environment=XFORM_XRAY_API=127.0.0.1:8080
 Environment=XFORM_XRAY_CONFIG=/usr/local/etc/xray/config.json
