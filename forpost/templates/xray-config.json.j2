@@ -72,11 +72,13 @@
     the true registered credential. -#}
 {%- set bu = forpost.bastion.uuid.split('-') -%}
 {%- set bastion_marked_uuid = bu[0] ~ '-' ~ bu[1] ~ '-0001-' ~ bu[3] ~ '-' ~ bu[4] -%}
+{#- Logging: no access/error paths — xray writes both streams to stdout/stderr,
+    and the installer's foreground xray.service pipes them into journald
+    (`journalctl -u xray`). loglevel filters only general messages; access
+    entries are never severity-filtered (pinned v26.3.27, app/log). -#}
 {%- set config = {
   "log": {
-    "loglevel": "warning",
-    "access": "/var/log/xray/access.log",
-    "error": "/var/log/xray/error.log"
+    "loglevel": "warning"
   },
   "stats": {},
   "policy": {

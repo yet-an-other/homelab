@@ -19,12 +19,31 @@ StateDirectoryMode=0750
 # The xform user still needs the directory ACL installed by 43-xform.sh.
 ReadWritePaths=/usr/local/etc/xray
 
+# Log snapshots (upstream xform docs/journal-namespace.md): both this unit
+# and xray log into the dedicated `xform` journal namespace, and the xform
+# user holds read ACLs on that namespace alone — never systemd-journal/adm
+# membership, which would expose every journal on the host. The namespace is
+# the boundary: any other unit assigned to it becomes readable by the panel.
+# Consequence: this unit's own records leave the default journal — read them
+# with `journalctl --namespace=xform -u xform.service`.
+LogNamespace=xform
+
+# Re-apply the namespace ACLs as root before the panel starts: on a volatile
+# host, boot-time tmpfiles runs before systemd-journald@xform creates
+# /run/log/journal/<machine-id>.xform. "+" runs it outside this unit's
+# sandbox; "-" keeps the panel starting (Log snapshots report their own
+# error) if the tmpfiles file is missing.
+ExecStartPre=-+/usr/bin/systemd-tmpfiles --create /etc/tmpfiles.d/xform-journal-acl.conf
+
 Environment=XFORM_LISTEN=127.0.0.1:9090
 Environment=XFORM_XRAY_API=127.0.0.1:8080
 Environment=XFORM_XRAY_CONFIG=/usr/local/etc/xray/config.json
 Environment=XFORM_CONNECTIONS_CONFIG=/usr/local/etc/xform/connections.json
 Environment=XFORM_DB=/var/lib/xform/xform.db
 Environment=XFORM_XRAY_UNIT=xray.service
+# journalctl is exec'd for Log snapshots; the panel refuses to start unless
+# this is an absolute, executable, regular file.
+Environment=XFORM_JOURNALCTL=/usr/bin/journalctl
 Environment=XFORM_PASSWORD={{ forpost.xform_password }}
 
 NoNewPrivileges=true

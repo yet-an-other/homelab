@@ -167,10 +167,10 @@ bootstrap shim (§7), the unit is the contract.
 
 | Unit | Does |
 |---|---|
-| `40-xray.sh` | run `lib/install-xray.sh` (install/upgrade xray-core, systemd unit); logrotate for `/var/log/xray/*.log`; `systemctl enable --now xray` / restart on config change |
+| `40-xray.sh` | run `lib/install-xray.sh` (install/upgrade xray-core, systemd unit); drop-in assigning xray to the `xform` journal namespace; `systemctl enable --now xray` / restart on config change |
 | `41-nginx.sh` | place rendered `nginx.conf` / `conf.d/default.conf` / `conf.d/fallback.conf` / `conf.d/xform.conf`; `nginx -t`; reload |
 | `42-ufw.sh` | `default deny incoming`, `default allow outgoing`; allow `42318/tcp` (SSH), `443/tcp` (VPN), and `9443/tcp` (xform); `--force enable`. **443/udp stays closed deliberately** (QUIC blocked, §6) |
-| `43-xform.sh` | install the latest stable checksum-verified xform release by architecture; place and harden its systemd service; preserve state; smoke-test updates; roll back and quarantine failed releases |
+| `43-xform.sh` | install the latest stable checksum-verified xform release by architecture; place and harden its systemd service; tmpfiles read ACLs on the `xform` journal namespace; preserve state; smoke-test updates; roll back and quarantine failed releases |
 
 The xray config and nginx confs are rendered by the play (§9) from `templates/` before units run;
 units never template — they place, verify, restart. Unit 43 is also invoked on otherwise unchanged Ansible
@@ -186,6 +186,14 @@ always be a live TLS 1.3 endpoint — xray mirrors dest's handshake even for
 authenticated clients (post-mortem in #10).
 
 Template: `templates/xray-config.json.j2` → `/usr/local/etc/xray/config.json`.
+
+**Logging.** The `log` object sets no access/error paths, so xray writes both streams to
+stdout/stderr and the installer's foreground `xray.service` pipes them into journald; no logrotate,
+no `/var/log/xray` management. `loglevel: warning` filters only general messages — access entries
+are never severity-filtered (pinned v26.3.27, `app/log`). A `40-xray.sh` drop-in assigns the unit
+to the dedicated `xform` journal namespace so the panel can read exactly this unit's records
+(§8): read the live log with `journalctl --namespace=xform -u xray.service` — plain
+`journalctl -u xray` shows only pre-migration records.
 
 **Panel gRPC API.** xform's prerequisite contract enables `stats`, level-zero user uplink,
 downlink, and online-user policy, plus inbound/outbound system traffic policy. Xray exposes
@@ -318,9 +326,16 @@ xform runs as a dedicated unprivileged user under a hardened systemd service. It
 state, and `xray.service`. A file ACL grants config read access, while a directory ACL and the unit's
 `ReadWritePaths=/usr/local/etc/xray` exception allow atomic roster rewrites without granting root. A
 default ACL preserves read access for xray's `nobody` user when xform replaces the mode-0640 config.
-xform can write only its systemd-managed application state and the Xray config directory. Installed
-release metadata, the quarantine marker, and the pre-upgrade database backup stay in root-owned
-forpost deployment state.
+xform can write only its systemd-managed application state and the Xray config directory, and logs to
+journald. Log snapshots are bounded by a dedicated `xform` journal namespace
+(upstream `docs/journal-namespace.md`): both the panel unit and xray (via the 40-xray.sh drop-in)
+log into it, and the xform user holds tmpfiles-managed read ACLs on that namespace alone — never
+`systemd-journal`/`adm` membership, which would expose every journal on the host. The unit pins
+`XFORM_JOURNALCTL=/usr/bin/journalctl` (the panel refuses to start on a non-absolute,
+non-executable path) and re-applies the ACLs as root on every start (`ExecStartPre`), which covers
+the volatile-boot ordering race; `tests/journal-namespace.sh` asserts the three artifacts stay in
+lockstep. Installed release metadata, the quarantine marker, and the pre-upgrade database backup stay
+in root-owned forpost deployment state.
 
 Every normal Ansible deployment asks GitHub for the latest stable, non-draft, non-prerelease release,
 selects `xform-linux-amd64` or `xform-linux-arm64`, and verifies it against `checksums.txt`. Matching
@@ -333,7 +348,8 @@ A failed probe restores the binary and database, restarts the prior version, and
 A healthy rollback is a recovered update, so the play continues to its Xray, nginx, and port-443 checks;
 the same rejected tag is skipped until a newer release
 appears or `/var/lib/forpost/xform/rejected-version` is removed manually. Inspect service and update output with
-`journalctl -u xform` and `/var/log/forpost/43-xform.log`.
+`journalctl --namespace=xform -u xform` (the panel unit logs to the namespace, not the default
+journal) and `/var/log/forpost/43-xform.log`.
 
 **Advertised connection settings.** The panel never infers a public client view from the xray
 listener (NAT and the nginx SNI map make that unsafe — upstream SPEC §3.2), so the play renders
@@ -465,6 +481,9 @@ switchover, and healed as soon as 40 completes.
 - [ ] panel users carry a connection profile: the advertisement satisfies the inbound
       (`tests/xform-connections.sh` green) and the profile link equals the §8 share link for the
       primary name
+- [ ] xray and panel records land in the `xform` journal namespace (`tests/journal-namespace.sh`
+      green): `journalctl --namespace=xform -u xray.service` and `-u xform.service` show fresh
+      entries, while `sudo -u xform journalctl -n 1` against the default journal is denied
 - [ ] `xray api statsquery --server=127.0.0.1:8080` succeeds
 - [ ] non-privileged client: exit IP = alwyzon's; public `*.bdgn.me` works; `192.168.x.x` fails fast
 - [ ] privileged client: exit IP = alwyzon's; `*.bdgn.me` and internal IPs reach internal VMs via bastion

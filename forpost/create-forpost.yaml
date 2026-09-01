@@ -148,6 +148,12 @@
       become: false
       changed_when: false
 
+    - name: assert the journal namespace contract holds before anything places it
+      ansible.builtin.command: "{{ playbook_dir }}/tests/journal-namespace.sh"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
     - name: create the xray config directory
       ansible.builtin.file:
         path: /usr/local/etc/xray

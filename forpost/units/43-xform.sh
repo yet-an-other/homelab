@@ -180,6 +180,21 @@ setup_host() {
   install -d -m 0750 -o xform -g xform "${app_state_dir}"
   install -d -m 0750 -o root -g root "${deployment_state_dir}"
 
+  # Journal namespace read ACLs for the xform user (SPEC §8): the panel reads
+  # only the `xform` namespace — never via systemd-journal/adm membership.
+  # Applying here covers the already-existing namespace dirs; xform.service's
+  # ExecStartPre re-applies on every start for the volatile-boot case.
+  local tmpfiles_conf="/etc/tmpfiles.d/xform-journal-acl.conf"
+  local tmpfiles_src
+  tmpfiles_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/xform-journal-acl.conf"
+  if [ -f "${tmpfiles_conf}" ] && cmp -s "${tmpfiles_src}" "${tmpfiles_conf}"; then
+    log "${tmpfiles_conf} already in place"
+  else
+    install -m 0644 -o root -g root "${tmpfiles_src}" "${tmpfiles_conf}"
+    log "placed ${tmpfiles_conf}"
+  fi
+  systemd-tmpfiles --create "${tmpfiles_conf}"
+
   if [ ! -f "${service_staging}" ]; then
     echo "43-xform: missing staged service: ${service_staging}" >&2
     return 1
